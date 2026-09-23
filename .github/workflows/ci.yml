@@ -1,0 +1,74 @@
+name: Local contract and workspace checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-validation:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      MAIA_LIVE_CLAUDE_CODE: '0'
+      M0_8_LIVE_ANTHROPIC: '0'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install validation dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Install Rust tools
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup override set stable
+      - name: Fetch locked workspace dependencies
+        run: cargo fetch --locked
+      - name: Canonical spec and generated contracts
+        run: python tools/spec_guard.py
+      - name: Formatting
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
+      - name: Clippy including development code
+        if: ${{ !cancelled() }}
+        run: cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings
+      - name: Default-feature workspace tests
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --locked --offline --no-fail-fast
+      - name: Development-feature workspace tests
+        if: ${{ !cancelled() }}
+        run: cargo test --workspace --all-features --locked --offline --no-fail-fast
+      - name: Python canonical tests
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s tests/spec -p "test*.py"
+      - name: Python governance tests
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s tools/tests -p "test*.py"
+      - name: Standalone deterministic governance controls
+        if: ${{ !cancelled() }}
+        run: |
+          python tools/tests/test_continuation_driver.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/tests/test_night_shift.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/tests/test_round_table_absent.py
+      - name: Python local harness tests
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s tools/maia_local_harness/tests -p "test*.py"
+      - name: Round Table absence proof
+        if: ${{ !cancelled() }}
+        run: python tools/verify_round_table_absent.py
+      - name: Whitespace check
+        if: ${{ !cancelled() }}
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- Cargo.lock generated core/domain/src/generated
