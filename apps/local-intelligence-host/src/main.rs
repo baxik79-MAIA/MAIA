@@ -1,4 +1,5 @@
-//! Local Intelligence Recorder Host (M0.15.14).
+//! Local Intelligence Host (M0.15.14 recorder ownership; M0.15.17
+//! application-facing advisory consumption).
 //!
 //! The smallest application-level composition root that keeps one
 //! `maia_local_intelligence_recorder::Recorder` running continuously so
@@ -8,7 +9,7 @@
 //!
 //! This is **not** a Local Intelligence Lifecycle Supervisor, Ollama
 //! lifecycle ownership, process restart logic, repair/remediation, causal
-//! hypothesis generation, model reasoning, Round Table invocation,
+//! causal confirmation, model reasoning, Round Table invocation,
 //! self-improvement logic, Windows-service installation, startup-task
 //! registration, or deployment/autostart packaging. It is only the
 //! smallest composition/lifecycle integration required to keep one
@@ -42,13 +43,17 @@
 //! Naming follows the existing `apps/local-briefing-host` /
 //! `maia-local-briefing-host` convention (`apps/local-intelligence-host` /
 //! `maia-local-intelligence-host`); like `apps/desktop`, it is a plain
-//! binary crate with inline `#[cfg(test)]` tests, not a library — nothing
-//! outside this crate is meant to depend on it (mechanically proven, see
-//! `tests/capability_mesh.rs`).
+//! application package. M0.15.17 adds a small library target in this same
+//! package as the explicit application-facing read-only advisory boundary;
+//! no second application or infrastructure owner is created.
 #![forbid(unsafe_code)]
 
 use maia_local_intelligence_health::{
     HealthStore, ObserverError, RetentionPolicy as HealthRetentionPolicy,
+};
+use maia_local_intelligence_host::{
+    ApplicationDiagnosticRequest, ApplicationDiagnosticResult, ApplicationEvaluationFailure,
+    ApplicationEvaluationStage, evaluate_local_intelligence,
 };
 use maia_local_intelligence_hypothesis_ledger::{
     Ledger, LedgerError, RetentionPolicy as LedgerRetentionPolicy,
@@ -57,7 +62,7 @@ use maia_local_intelligence_recorder::{CycleOutcome, Recorder, RecorderConfig, S
 use std::{
     path::PathBuf,
     sync::{Arc, mpsc},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 const DEFAULT_HEALTH_DB: &str = r"C:\MAIA\data\maia-local-intelligence-health.sqlite3";
@@ -143,6 +148,7 @@ struct HostStatus {
     window: Duration,
     health_db_path: PathBuf,
     ledger_db_path: PathBuf,
+    evidence_limit: usize,
 }
 
 /// The running host: one `Recorder`, started against dependencies that were
@@ -153,6 +159,7 @@ struct HostStatus {
 /// anywhere in this crate (mechanically proven, `tests/capability_mesh.rs`).
 struct LocalIntelligenceHost {
     recorder: Recorder,
+    ledger: Arc<Ledger>,
     status: HostStatus,
     cycle_outcomes: mpsc::Receiver<CycleOutcome>,
 }
@@ -167,14 +174,17 @@ impl LocalIntelligenceHost {
     fn start(config: HostConfig) -> Result<Self, HostStartError> {
         let health = HealthStore::open(&config.health_db_path, HealthRetentionPolicy::default())
             .map_err(HostStartError::HealthStoreUnavailable)?;
-        let ledger = Ledger::open(&config.ledger_db_path, LedgerRetentionPolicy::default())
-            .map_err(HostStartError::LedgerUnavailable)?;
+        let ledger = Arc::new(
+            Ledger::open(&config.ledger_db_path, LedgerRetentionPolicy::default())
+                .map_err(HostStartError::LedgerUnavailable)?,
+        );
         let status = HostStatus {
             recorder_id: config.recorder_id.clone(),
             cadence: config.cadence,
             window: config.window,
             health_db_path: config.health_db_path.clone(),
             ledger_db_path: config.ledger_db_path.clone(),
+            evidence_limit: config.evidence_limit,
         };
         let recorder_config = RecorderConfig {
             recorder_id: config.recorder_id,
@@ -183,9 +193,10 @@ impl LocalIntelligenceHost {
             evidence_limit: config.evidence_limit,
         };
         let (recorder, cycle_outcomes) =
-            Recorder::start_observed(Arc::new(health), Arc::new(ledger), recorder_config);
+            Recorder::start_observed(Arc::new(health), Arc::clone(&ledger), recorder_config);
         Ok(Self {
             recorder,
+            ledger,
             status,
             cycle_outcomes,
         })
@@ -193,6 +204,13 @@ impl LocalIntelligenceHost {
 
     fn status(&self) -> &HostStatus {
         &self.status
+    }
+
+    /// Shares the already-open public ledger capability with the read-only
+    /// application adapter. It neither opens SQLite directly nor grants the
+    /// adapter access to Recorder lifecycle control.
+    fn advisory_ledger(&self) -> Arc<Ledger> {
+        Arc::clone(&self.ledger)
     }
 
     /// Drains every cycle outcome reported so far without blocking —
@@ -215,6 +233,7 @@ fn print_status(status: &HostStatus) {
     println!("  window: {:?}", status.window);
     println!("  health_db: {}", status.health_db_path.display());
     println!("  ledger_db: {}", status.ledger_db_path.display());
+    println!("  evidence_limit: {}", status.evidence_limit);
 }
 
 fn summarize_outcomes(outcomes: &[CycleOutcome]) {
@@ -241,6 +260,60 @@ fn summarize_outcomes(outcomes: &[CycleOutcome]) {
             .filter(|o| !matches!(o, CycleOutcome::Recorded | CycleOutcome::AlreadyRecorded))
         {
             println!("    cycle failure: {outcome:?}");
+        }
+    }
+}
+
+fn print_advisory(result: &ApplicationDiagnosticResult) {
+    println!("Local Intelligence advisory (read-only):");
+    match result {
+        ApplicationDiagnosticResult::Evaluated { assessments } => {
+            for assessment in assessments {
+                println!(
+                    "  {} hypothesis={} subject={:?} confidence={:?} qualification={:?} reason={:?}",
+                    assessment.state.code(),
+                    assessment.hypothesis_id().as_str(),
+                    assessment.subject(),
+                    assessment.confidence(),
+                    assessment.qualification.state,
+                    assessment.qualification.reason,
+                );
+                println!(
+                    "    uncertainty: {}",
+                    assessment.qualification.hypothesis.uncertainty
+                );
+                println!(
+                    "    qualified_at={:?} source_window={:?} stale={} rule={} gaps={:?}",
+                    assessment.qualification.qualified_at,
+                    assessment.qualification.source_window,
+                    assessment.qualification.evidence_is_stale,
+                    assessment.qualification.rule,
+                    assessment.qualification.evidence_gaps,
+                );
+                for evidence in &assessment.evidence {
+                    println!(
+                        "    evidence={} role={:?} available={} observed_at={:?} requested={:?} actual={:?}",
+                        evidence.observation_id.as_str(),
+                        evidence.role,
+                        evidence.available,
+                        evidence.observed_at,
+                        evidence.requested_window,
+                        evidence.actual_status_span,
+                    );
+                }
+            }
+        }
+        ApplicationDiagnosticResult::InsufficientEvidence {
+            observations_scanned,
+            indeterminate_observations,
+        } => println!(
+            "  INSUFFICIENT_EVIDENCE observations_scanned={observations_scanned} indeterminate_observations={indeterminate_observations}"
+        ),
+        ApplicationDiagnosticResult::Unavailable { stage, reason } => {
+            println!("  UNAVAILABLE stage={stage:?} reason={reason:?}")
+        }
+        ApplicationDiagnosticResult::EvaluationFailed { stage, reason } => {
+            println!("  EVALUATION_FAILED stage={stage:?} reason={reason:?}")
         }
     }
 }
@@ -287,14 +360,69 @@ fn main() {
     }
 
     let outcomes = host.drain_cycle_outcomes();
+    let status = host.status().clone();
+    let advisory_ledger = host.advisory_ledger();
     let stop_outcome = host.stop();
     println!("Recorder stopped: {stop_outcome:?}");
     summarize_outcomes(&outcomes);
+    let advisory = evaluate_advisory(&advisory_ledger, &status, SystemTime::now());
+    print_advisory(&advisory);
+}
+
+/// How far back the advisory scans `observed_at`, derived from the
+/// recorder's own cadence/window rather than a separate constant.
+///
+/// Each observation covers the inclusive span `[observed_at - window,
+/// observed_at]`, so two observations can supply disjoint support only when
+/// they are more than `window` apart. The recorder emits at most one
+/// observation per cadence slot, so the smallest such separation is the
+/// least cadence multiple strictly greater than `window`. One further
+/// cadence admits the newest observation trailing the evaluation instant by
+/// up to one slot. Scanning only `window` (the pre-F1 behaviour) makes
+/// disjoint support, and thus `QUALIFIED`, unreachable. Qualification itself
+/// is unchanged: freshness, coverage and counter-evidence still apply to
+/// every scanned observation. `None` for a zero cadence or on overflow.
+fn advisory_lookback(cadence: Duration, window: Duration) -> Option<Duration> {
+    let cadence_ns = cadence.as_nanos();
+    if cadence_ns == 0 {
+        return None;
+    }
+    let separation_ns = (window.as_nanos() / cadence_ns + 1).checked_mul(cadence_ns)?;
+    let lookback_ns = separation_ns.checked_add(cadence_ns)?;
+    u64::try_from(lookback_ns).ok().map(Duration::from_nanos)
+}
+
+/// The host's read-only advisory evaluation at `evaluated_at`.
+fn evaluate_advisory(
+    ledger: &Ledger,
+    status: &HostStatus,
+    evaluated_at: SystemTime,
+) -> ApplicationDiagnosticResult {
+    let since = advisory_lookback(status.cadence, status.window)
+        .and_then(|lookback| evaluated_at.checked_sub(lookback));
+    match since {
+        Some(since) => evaluate_local_intelligence(
+            ledger,
+            ApplicationDiagnosticRequest {
+                since,
+                until: evaluated_at,
+                scan_limit: status.evidence_limit,
+                evaluated_at,
+                qualification_policy: Default::default(),
+            },
+        ),
+        None => ApplicationDiagnosticResult::EvaluationFailed {
+            stage: ApplicationEvaluationStage::Generation,
+            reason: ApplicationEvaluationFailure::InvalidRequest,
+        },
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use maia_local_intelligence_host::ApplicationDiagnosticState;
+    use maia_local_intelligence_recorder::record_cycle;
     use std::{
         collections::BTreeSet,
         sync::atomic::{AtomicU64, Ordering},
@@ -500,5 +628,178 @@ mod tests {
             "shutdown must remain bounded and prompt"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // F1 (pre-publication): the lookback is derived from cadence/window and
+    // exceeds the window, which is what makes disjoint support scannable.
+    #[test]
+    fn advisory_lookback_is_derived_from_cadence_and_window() {
+        let defaults = RecorderConfig::default();
+        let lookback = advisory_lookback(defaults.cadence, defaults.window).unwrap();
+        assert!(lookback > defaults.window + defaults.cadence);
+        assert_eq!(
+            advisory_lookback(Duration::from_secs(15 * 60), Duration::from_secs(60 * 60)),
+            Some(Duration::from_secs(90 * 60))
+        );
+        assert_eq!(
+            advisory_lookback(Duration::from_secs(20), Duration::from_secs(50)),
+            Some(Duration::from_secs(80))
+        );
+        assert_eq!(
+            advisory_lookback(Duration::ZERO, Duration::from_secs(1)),
+            None
+        );
+        assert_eq!(advisory_lookback(Duration::MAX, Duration::MAX), None);
+    }
+
+    fn default_status() -> HostStatus {
+        let defaults = RecorderConfig::default();
+        HostStatus {
+            recorder_id: defaults.recorder_id,
+            cadence: defaults.cadence,
+            window: defaults.window,
+            health_db_path: PathBuf::new(),
+            ledger_db_path: PathBuf::new(),
+            evidence_limit: defaults.evidence_limit,
+        }
+    }
+
+    /// Cadence-aligned slot boundary `slot`, far from the epoch.
+    fn boundary(config: &RecorderConfig, slot: u32) -> SystemTime {
+        SystemTime::UNIX_EPOCH + config.cadence * (2_000_000 + slot)
+    }
+
+    /// Real health evidence (per-minute status samples plus the given
+    /// timeouts) recorded through the recorder's own `record_cycle` at the
+    /// default cadence/window for slots `0..=slots`.
+    fn recorded_ledger(config: &RecorderConfig, slots: u32, timeouts: &[SystemTime]) -> Ledger {
+        use maia_local_intelligence_health::OperationClass;
+        use maia_local_model::{LocalIntelligenceFailure, LocalIntelligenceStatus};
+
+        let health = HealthStore::open_in_memory(HealthRetentionPolicy::default()).unwrap();
+        let ledger = Ledger::open_in_memory(LedgerRetentionPolicy::default()).unwrap();
+        let status = LocalIntelligenceStatus {
+            available: true,
+            model: "synthetic".into(),
+        };
+        let mut sample = boundary(config, 0).checked_sub(config.window).unwrap();
+        while sample <= boundary(config, slots) {
+            health.record_status_sample(&status, None, sample).unwrap();
+            sample += Duration::from_secs(60);
+        }
+        for &failed_at in timeouts {
+            health
+                .record_inference_failure(
+                    "synthetic",
+                    OperationClass::CompleteDetailed,
+                    LocalIntelligenceFailure::Timeout,
+                    None,
+                    failed_at,
+                )
+                .unwrap();
+        }
+        for slot in 0..=slots {
+            let outcome = record_cycle(&health, &ledger, config, boundary(config, slot));
+            assert_eq!(outcome, CycleOutcome::Recorded);
+        }
+        ledger
+    }
+
+    /// Three timeouts shortly before `at`.
+    fn timeout_burst(at: SystemTime) -> [SystemTime; 3] {
+        [2u64, 5, 8].map(|minutes| at - Duration::from_secs(minutes * 60))
+    }
+
+    fn assessed_states(result: &ApplicationDiagnosticResult) -> Vec<ApplicationDiagnosticState> {
+        let ApplicationDiagnosticResult::Evaluated { assessments } = result else {
+            panic!("expected evaluated result, got {result:?}")
+        };
+        assessments.iter().map(|a| a.state).collect()
+    }
+
+    #[test]
+    fn real_host_path_reaches_qualified_with_recorded_disjoint_evidence() {
+        let status = default_status();
+        let config = RecorderConfig::default();
+        let slots = 8;
+        let timeouts: Vec<_> = (0..=slots)
+            .flat_map(|slot| timeout_burst(boundary(&config, slot)))
+            .collect();
+        let ledger = recorded_ledger(&config, slots, &timeouts);
+        // Evaluate part-way into the following slot, as a real shutdown would.
+        let evaluated_at = boundary(&config, slots) + Duration::from_secs(10 * 60);
+
+        let result = evaluate_advisory(&ledger, &status, evaluated_at);
+        let states = assessed_states(&result);
+        assert!(
+            states.contains(&ApplicationDiagnosticState::Qualified),
+            "QUALIFIED must be reachable through the host path: {states:?}"
+        );
+        let ApplicationDiagnosticResult::Evaluated { assessments } = &result else {
+            unreachable!()
+        };
+        for assessment in assessments {
+            assert!(!assessment.evidence.is_empty());
+            for item in &assessment.evidence {
+                assert!(item.available && item.observed_at.is_some());
+                assert!(item.requested_window.is_some());
+            }
+        }
+
+        // Root cause: the same evidence scanned over only `window` cannot
+        // yield disjoint support, so it never qualifies.
+        let pre_f1 = evaluate_local_intelligence(
+            &ledger,
+            ApplicationDiagnosticRequest {
+                since: evaluated_at - status.window,
+                until: evaluated_at,
+                scan_limit: status.evidence_limit,
+                evaluated_at,
+                qualification_policy: Default::default(),
+            },
+        );
+        assert!(!assessed_states(&pre_f1).contains(&ApplicationDiagnosticState::Qualified));
+    }
+
+    #[test]
+    fn real_host_path_keeps_counter_evidence_precedence() {
+        let status = default_status();
+        let config = RecorderConfig::default();
+        let slots = 12;
+        // Evaluating at slot 12 scans slots 6..=12. Slots 7 and 12 have
+        // disjoint supporting windows, but healthy slots 8..=11 contradict.
+        let mut timeouts =
+            timeout_burst(boundary(&config, 3) + Duration::from_secs(10 * 60)).to_vec();
+        timeouts.extend(timeout_burst(boundary(&config, 12)));
+        let ledger = recorded_ledger(&config, slots, &timeouts);
+        let states = assessed_states(&evaluate_advisory(
+            &ledger,
+            &status,
+            boundary(&config, slots),
+        ));
+        assert!(
+            !states.contains(&ApplicationDiagnosticState::Qualified),
+            "counter-evidence must prevent QUALIFIED: {states:?}"
+        );
+        assert!(
+            states.contains(&ApplicationDiagnosticState::CounterEvidencePresent),
+            "counter-evidence must stay visible: {states:?}"
+        );
+    }
+
+    #[test]
+    fn real_host_path_does_not_assess_evidence_outside_the_lookback() {
+        let status = default_status();
+        let config = RecorderConfig::default();
+        let slots = 8;
+        let timeouts: Vec<_> = (0..=slots)
+            .flat_map(|slot| timeout_burst(boundary(&config, slot)))
+            .collect();
+        let ledger = recorded_ledger(&config, slots, &timeouts);
+        let evaluated_at = boundary(&config, slots) + Duration::from_secs(2 * 24 * 60 * 60);
+        assert!(matches!(
+            evaluate_advisory(&ledger, &status, evaluated_at),
+            ApplicationDiagnosticResult::InsufficientEvidence { .. }
+        ));
     }
 }

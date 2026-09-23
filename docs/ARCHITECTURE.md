@@ -7,7 +7,7 @@ MAIA is a local-first, human-governed execution-intelligence project. Its value 
 | Location | Responsibility |
 | --- | --- |
 | `core/` | OS-neutral domain contracts, policy/orchestration, store ports, runtime/executor boundaries, assurance routing and briefing |
-| `infra/` | SQLite and model/provider adapters; local intelligence health, diagnostics, hypothesis ledger and recorder |
+| `infra/` | SQLite and model/provider adapters; local intelligence health, diagnostics, hypothesis ledger, hypothesis generation/qualification and recorder |
 | `composition/` | Explicit assembly and observability for optional consultation components |
 | `roundtable/` | Optional multi-model reasoning module consuming public contracts |
 | `apps/` | Experimental desktop, briefing/recorder hosts and Round Table viewer |

@@ -1,6 +1,7 @@
 //! M0.15.14 §14: the actual compiled `local-intelligence-host` binary, run
 //! as a real subprocess, proving HOST START -> RECORDER START ->
-//! AUTOMATIC OBSERVATION ACCUMULATION -> GRACEFUL STOP end to end. Uses the
+//! AUTOMATIC OBSERVATION ACCUMULATION -> GRACEFUL STOP -> READ-ONLY
+//! APPLICATION ADVISORY CONSUMPTION end to end. Uses the
 //! binary's `--seconds` bounded-run mode (matching
 //! `local-intelligence-recorder run --seconds N`'s existing convention) so
 //! no signal needs to be sent to the child process, and lives here (rather
@@ -52,6 +53,14 @@ fn actual_host_binary_smoke_test_start_record_stop() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Recorder started."), "stdout: {stdout}");
     assert!(stdout.contains("Recorder stopped:"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("Local Intelligence advisory (read-only):"),
+        "the real application path must consume the advisory boundary; stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("INSUFFICIENT_EVIDENCE"),
+        "empty synthetic health history must remain explicit, never appear qualified; stdout: {stdout}"
+    );
     let ledger = Ledger::open(&ledger_path, LedgerRetentionPolicy::default()).expect("open ledger");
     assert!(
         !ledger.latest_n(10).unwrap().is_empty(),

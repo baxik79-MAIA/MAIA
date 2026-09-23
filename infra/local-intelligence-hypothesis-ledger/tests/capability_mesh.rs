@@ -62,6 +62,7 @@ fn the_ledger_has_no_dependency_capable_of_a_hidden_cloud_call_or_process_contro
         "maia-local-intelligence-diagnostics",
         "maia-local-intelligence-health",
         "rusqlite",
+        "serde",
         "serde_json",
     ];
     for dep in &deps {
@@ -196,32 +197,25 @@ fn the_ledger_production_code_never_calls_a_health_store_record_method() {
     }
 }
 
-/// No confidence-score or independent-confirmation concept exists on the
-/// ledger's public result types — the M0.15.12 directive's explicit "no
-/// confidence score is authorized in M0.15.12" and "must not... multiply
-/// confidence because there are N records", checked structurally, not
-/// merely by not writing a test that happens not to compute one.
+/// M0.15.12 observation summaries cannot present overlapping reads as
+/// independent confirmations or assign them confidence. A later proposed
+/// hypothesis has its own qualitative confidence, so inspect only the
+/// original observation result contracts here.
 #[test]
-fn no_confidence_or_independence_field_exists_on_a_public_result_type() {
-    // Checked as a field/identifier shape, not a bare substring: the word
-    // "confidence" legitimately appears in this crate's own doc comments
-    // and test comments explaining why no such concept exists (e.g. "this
-    // type deliberately carries no confidence score") -- exactly the kind
-    // of self-referential false positive M0.15.11's own acceptance test
-    // hit and fixed the same way. What actually matters is that no public
-    // struct FIELD or enum VARIANT is named after either concept.
-    for forbidden in [
-        "pub confidence",
-        "pub independent_confirmation",
-        "Confidence,",
-        "IndependentConfirmation",
+fn observation_results_have_no_confidence_or_independence_claim() {
+    for name in [
+        "LedgerCoverage",
+        "ConsecutiveRunResult",
+        "EligibleSupportResult",
     ] {
-        assert!(
-            !LEDGER_LIB.contains(forbidden),
-            "infra/local-intelligence-hypothesis-ledger/src/lib.rs must never expose a \
-             `{forbidden}` field or variant — repeated overlapping observations are never \
-             presented as independent confirmations or a confidence score"
-        );
+        let start = LEDGER_LIB.find(&format!("pub struct {name} {{")).unwrap();
+        let body = LEDGER_LIB[start..].split_once('}').unwrap().0;
+        for forbidden in ["confidence", "independent_confirmation"] {
+            assert!(
+                !body.contains(forbidden),
+                "{name} must not claim {forbidden} from overlapping observations"
+            );
+        }
     }
 }
 
@@ -249,6 +243,14 @@ fn the_public_ledger_contract_stays_public() {
         "pub enum EvidenceState",
         "pub enum RunStopReason",
         "pub fn pattern_state",
+        "pub fn record_hypothesis",
+        "pub fn get_hypothesis",
+        "pub fn latest_hypotheses",
+        "pub fn hypotheses_in_window",
+        "pub struct HypothesisId",
+        "pub struct DiagnosticHypothesis",
+        "pub enum HypothesisConfidence",
+        "pub enum HypothesisStatus",
     ];
     for item in public_items {
         assert!(

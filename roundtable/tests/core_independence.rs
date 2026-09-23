@@ -143,6 +143,18 @@ const OTHER: &[(&str, &str)] = &[
         "maia-local-intelligence-hypothesis-ledger",
         include_str!("../../infra/local-intelligence-hypothesis-ledger/Cargo.toml"),
     ),
+    // M0.15.15: deterministic, read-only interpretation of persisted
+    // diagnostic observations. No Round Table or provider dependency.
+    (
+        "maia-local-intelligence-hypothesis-generator",
+        include_str!("../../infra/local-intelligence-hypothesis-generator/Cargo.toml"),
+    ),
+    // M0.15.16: deterministic advisory qualification of generated proposals.
+    // Reads only public diagnostic and ledger contracts; no Round Table path.
+    (
+        "maia-local-intelligence-hypothesis-qualification",
+        include_str!("../../infra/local-intelligence-hypothesis-qualification/Cargo.toml"),
+    ),
     // M0.15.13: the bounded-cadence diagnostic evidence recorder. Depends
     // on all three prior Local Intelligence capabilities (health,
     // diagnostics, ledger) and nothing else; no Round Table crate depends

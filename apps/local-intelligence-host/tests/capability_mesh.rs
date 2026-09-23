@@ -1,10 +1,11 @@
-//! Capability Mesh acceptance test (M0.15.14), in the same spirit as every
+//! Capability Mesh acceptance test (M0.15.14 / M0.15.17), in the same spirit as every
 //! prior Local Intelligence acceptance test and
 //! `roundtable/tests/core_independence.rs`: mechanical proof via real,
 //! checked-in manifests and source, not narrative claim.
 
 const HOST_MANIFEST: &str = include_str!("../Cargo.toml");
 const HOST_MAIN: &str = include_str!("../src/main.rs");
+const HOST_LIB: &str = include_str!("../src/lib.rs");
 const RECORDER_MANIFEST: &str =
     include_str!("../../../infra/local-intelligence-recorder/Cargo.toml");
 const DIAGNOSTICS_MANIFEST: &str =
@@ -12,6 +13,10 @@ const DIAGNOSTICS_MANIFEST: &str =
 const HEALTH_MANIFEST: &str = include_str!("../../../infra/local-intelligence-health/Cargo.toml");
 const LEDGER_MANIFEST: &str =
     include_str!("../../../infra/local-intelligence-hypothesis-ledger/Cargo.toml");
+const GENERATOR_MANIFEST: &str =
+    include_str!("../../../infra/local-intelligence-hypothesis-generator/Cargo.toml");
+const QUALIFICATION_MANIFEST: &str =
+    include_str!("../../../infra/local-intelligence-hypothesis-qualification/Cargo.toml");
 const LOCAL_MODEL_MANIFEST: &str = include_str!("../../../infra/local-model/Cargo.toml");
 const CORE_BRIEFING_MANIFEST: &str = include_str!("../../../core/briefing/Cargo.toml");
 
@@ -28,7 +33,7 @@ fn dependency_names(manifest: &str) -> Vec<&str> {
         .collect()
 }
 
-/// Nothing in Core, and none of the four Local Intelligence infrastructure
+/// Nothing in Core, and none of the Local Intelligence infrastructure
 /// crates, may depend on the application host — the M0.15.14 directive's
 /// explicit "Nothing in Core may depend on the host. Recorder must not
 /// depend on the host. No reverse dependency from Local Intelligence
@@ -43,6 +48,14 @@ fn nothing_in_core_or_local_intelligence_infrastructure_depends_on_the_host() {
             "infra/local-intelligence-hypothesis-ledger",
             LEDGER_MANIFEST,
         ),
+        (
+            "infra/local-intelligence-hypothesis-generator",
+            GENERATOR_MANIFEST,
+        ),
+        (
+            "infra/local-intelligence-hypothesis-qualification",
+            QUALIFICATION_MANIFEST,
+        ),
         ("infra/local-model", LOCAL_MODEL_MANIFEST),
         ("core/briefing", CORE_BRIEFING_MANIFEST),
     ] {
@@ -55,7 +68,9 @@ fn nothing_in_core_or_local_intelligence_infrastructure_depends_on_the_host() {
 }
 
 /// The host's own real dependency graph is exactly the expected chain:
-/// host -> recorder -> diagnostics -> health -> ledger, plus `ctrlc` for
+/// host -> application adapter -> generator/qualification -> diagnostics/
+/// ledger, while retaining recorder -> diagnostics -> health -> ledger, plus
+/// `ctrlc` for
 /// graceful shutdown (which does not let this process control any OTHER
 /// process — it only lets this process react to its own termination
 /// signal, categorically different from process-control authority over
@@ -66,8 +81,11 @@ fn the_host_depends_only_on_the_expected_local_intelligence_chain_plus_ctrlc() {
     let deps = dependency_names(HOST_MANIFEST);
     let allowed = [
         "ctrlc",
+        "maia-local-intelligence-diagnostics",
         "maia-local-intelligence-health",
+        "maia-local-intelligence-hypothesis-generator",
         "maia-local-intelligence-hypothesis-ledger",
+        "maia-local-intelligence-hypothesis-qualification",
         "maia-local-intelligence-recorder",
     ];
     for dep in &deps {
@@ -86,9 +104,10 @@ fn the_host_depends_only_on_the_expected_local_intelligence_chain_plus_ctrlc() {
 }
 
 fn production_code_without_comments() -> String {
-    let production = HOST_MAIN.split("#[cfg(test)]").next().unwrap_or(HOST_MAIN);
-    production
-        .lines()
+    [HOST_MAIN, HOST_LIB]
+        .into_iter()
+        .map(|source| source.split("#[cfg(test)]").next().unwrap_or(source))
+        .flat_map(str::lines)
         .filter(|line| !line.trim_start().starts_with("//"))
         .collect::<Vec<_>>()
         .join("\n")
@@ -119,6 +138,11 @@ fn the_host_never_references_private_implementation_of_its_dependencies() {
         // infra/local-intelligence-recorder
         "run_loop",
         "start_inner",
+        // infra/local-intelligence-hypothesis-generator
+        "stable_id",
+        // infra/local-intelligence-hypothesis-qualification
+        "disjoint_support_count",
+        "extend_window",
     ];
     for item in private_items {
         assert!(
@@ -186,11 +210,10 @@ fn the_host_never_calls_a_health_store_record_method() {
     }
 }
 
-/// No causal reasoning or model/LLM inference call exists in the host —
-/// it only ever starts/stops a `Recorder` and prints already-computed
-/// `CycleOutcome` values.
+/// The application cut uses only the deterministic generator and qualifier.
+/// No provider/model inference call or consultation path exists in the host.
 #[test]
-fn no_causal_reasoning_or_model_inference_call_exists_in_production_code() {
+fn no_provider_or_model_inference_call_exists_in_production_code() {
     let production = production_code_without_comments();
     let forbidden = [
         "TextCompletion",
@@ -202,8 +225,36 @@ fn no_causal_reasoning_or_model_inference_call_exists_in_production_code() {
         assert!(
             !production.contains(pattern),
             "apps/local-intelligence-host/src/main.rs's production code must never call \
-             `{pattern}` — no model/LLM inference call and no causal reasoning exists in this \
-             application"
+             `{pattern}` — no model/LLM inference or consultation call exists in this \
+             application cut"
+        );
+    }
+}
+
+/// The M0.15.17 adapter is observational. It may read, generate proposals in
+/// memory and qualify them, but it cannot persist or mutate evidence.
+#[test]
+fn the_application_advisory_boundary_has_no_write_or_action_path() {
+    let production = HOST_LIB
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap_or(HOST_LIB)
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    for forbidden in [
+        ".record(",
+        "record_hypothesis",
+        "start_observed",
+        "Recorder",
+        "std::process::Command",
+        "execute(",
+        "remediate",
+    ] {
+        assert!(
+            !production.contains(forbidden),
+            "application advisory boundary must remain read-only and non-authoritative; found `{forbidden}`"
         );
     }
 }

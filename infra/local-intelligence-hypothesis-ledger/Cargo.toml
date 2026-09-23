@@ -11,6 +11,7 @@ path = "src/bin/ledger_cli.rs"
 [dependencies]
 maia-local-intelligence-diagnostics = { path = "../local-intelligence-diagnostics" }
 rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Used only by the `local-intelligence-ledger` CLI binary (to build a fresh
 # DiagnosticSnapshot before recording it) -- never by lib.rs, which depends

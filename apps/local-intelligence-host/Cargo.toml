@@ -6,6 +6,12 @@ rust-version = "1.85"
 
 [dependencies]
 ctrlc = "3"
+maia-local-intelligence-diagnostics = { path = "../../infra/local-intelligence-diagnostics" }
 maia-local-intelligence-health = { path = "../../infra/local-intelligence-health" }
+maia-local-intelligence-hypothesis-generator = { path = "../../infra/local-intelligence-hypothesis-generator" }
 maia-local-intelligence-hypothesis-ledger = { path = "../../infra/local-intelligence-hypothesis-ledger" }
+maia-local-intelligence-hypothesis-qualification = { path = "../../infra/local-intelligence-hypothesis-qualification" }
 maia-local-intelligence-recorder = { path = "../../infra/local-intelligence-recorder" }
+
+[dev-dependencies]
+maia-local-model = { path = "../../infra/local-model" }

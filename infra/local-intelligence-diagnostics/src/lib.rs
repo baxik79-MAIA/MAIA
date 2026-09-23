@@ -109,6 +109,13 @@ pub struct WindowCoverage {
     pub retained_status_span: Option<(SystemTime, SystemTime)>,
     /// The full retained span of inference outcomes, across all history.
     pub retained_outcome_span: Option<(SystemTime, SystemTime)>,
+    /// Earliest/latest timestamps of the actual bounded status samples used
+    /// in this snapshot's requested window. Unlike retained_status_span,
+    /// this excludes samples outside the window and samples omitted by the
+    /// query limit. It describes sample boundaries, not continuous sampling.
+    /// Older serialized snapshots have no such proof and deserialize as None.
+    #[serde(default)]
+    pub status_evidence_span_in_window: Option<(SystemTime, SystemTime)>,
     /// `true` only if retained status history reaches back to at least
     /// `requested_since` — i.e. nothing that would have answered the
     /// requested window has already been evicted or simply never existed.
@@ -305,11 +312,18 @@ impl DiagnosticSnapshot {
         let limit = evidence_limit.clamp(1, MAX_EVIDENCE_LIMIT);
 
         let history = store.history_coverage()?;
+        let status_samples = store.status_samples_in_window(since, until, limit)?;
+        let status_evidence_span_in_window = status_samples
+            .iter()
+            .map(|sample| sample.recorded_at)
+            .min()
+            .zip(status_samples.iter().map(|sample| sample.recorded_at).max());
         let coverage = WindowCoverage {
             requested_since: since,
             requested_until: until,
             retained_status_span: history.status_samples_span,
             retained_outcome_span: history.inference_outcomes_span,
+            status_evidence_span_in_window,
             status_history_covers_requested_window: history
                 .status_samples_span
                 .is_some_and(|(earliest, _)| earliest <= since),
@@ -319,7 +333,6 @@ impl DiagnosticSnapshot {
         let current_availability = latest.as_ref().map(|s| s.available);
         let current_model = latest.map(|s| s.model);
 
-        let status_samples = store.status_samples_in_window(since, until, limit)?;
         let status_sample_count_in_window = status_samples.len();
         let availability_ratio_in_window = if status_sample_count_in_window == 0 {
             None
@@ -560,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_window_reports_complete_coverage() {
+    fn retention_start_flag_does_not_prove_window_end_coverage() {
         let store = store();
         for i in 0..10u64 {
             store
@@ -570,6 +583,65 @@ mod tests {
         let snapshot = DiagnosticSnapshot::build(&store, at(0), at(20), 100).unwrap();
         assert!(snapshot.coverage.status_history_covers_requested_window);
         assert_eq!(snapshot.coverage.retained_status_span, Some((at(0), at(9))));
+        assert_eq!(
+            snapshot.coverage.status_evidence_span_in_window,
+            Some((at(0), at(9)))
+        );
+        assert!(
+            snapshot.coverage.status_evidence_span_in_window.unwrap().1
+                < snapshot.coverage.requested_until
+        );
+    }
+
+    #[test]
+    fn actual_evidence_boundaries_exclude_out_of_window_and_query_limited_samples() {
+        let store = store();
+        for second in 0..=30 {
+            store
+                .record_status_sample(&status(true), None, at(second))
+                .unwrap();
+        }
+        let complete = DiagnosticSnapshot::build(&store, at(10), at(20), 100).unwrap();
+        assert_eq!(
+            complete.coverage.retained_status_span,
+            Some((at(0), at(30)))
+        );
+        assert_eq!(
+            complete.coverage.status_evidence_span_in_window,
+            Some((at(10), at(20)))
+        );
+        let limited = DiagnosticSnapshot::build(&store, at(10), at(20), 5).unwrap();
+        assert!(limited.coverage.status_history_covers_requested_window);
+        assert_eq!(
+            limited.coverage.status_evidence_span_in_window,
+            Some((at(16), at(20)))
+        );
+        let empty = DiagnosticSnapshot::build(&store, at(40), at(50), 100).unwrap();
+        assert_eq!(empty.coverage.status_evidence_span_in_window, None);
+    }
+
+    #[test]
+    fn legacy_snapshot_decodes_without_fabricating_evidence_boundaries() {
+        let store = store();
+        for second in 0..=20 {
+            store
+                .record_status_sample(&status(true), None, at(second))
+                .unwrap();
+        }
+        let mut snapshot = DiagnosticSnapshot::build(&store, at(0), at(20), 100).unwrap();
+        assert_eq!(
+            snapshot.coverage.status_evidence_span_in_window,
+            Some((at(0), at(20)))
+        );
+        let mut legacy = serde_json::to_value(&snapshot).unwrap();
+        legacy["coverage"]
+            .as_object_mut()
+            .unwrap()
+            .remove("status_evidence_span_in_window");
+        let decoded: DiagnosticSnapshot = serde_json::from_value(legacy).unwrap();
+        assert_eq!(decoded.coverage.status_evidence_span_in_window, None);
+        snapshot.coverage.status_evidence_span_in_window = None;
+        assert_eq!(decoded, snapshot);
     }
 
     #[test]

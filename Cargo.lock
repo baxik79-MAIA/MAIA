@@ -1614,9 +1614,24 @@ name = "maia-local-intelligence-host"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "maia-local-intelligence-diagnostics",
+ "maia-local-intelligence-health",
+ "maia-local-intelligence-hypothesis-generator",
+ "maia-local-intelligence-hypothesis-ledger",
+ "maia-local-intelligence-hypothesis-qualification",
+ "maia-local-intelligence-recorder",
+ "maia-local-model",
+]
+
+[[package]]
+name = "maia-local-intelligence-hypothesis-generator"
+version = "0.1.0"
+dependencies = [
+ "maia-local-intelligence-diagnostics",
  "maia-local-intelligence-health",
  "maia-local-intelligence-hypothesis-ledger",
- "maia-local-intelligence-recorder",
+ "maia-local-model",
+ "sha2",
 ]
 
 [[package]]
@@ -1627,7 +1642,19 @@ dependencies = [
  "maia-local-intelligence-health",
  "maia-local-model",
  "rusqlite",
+ "serde",
  "serde_json",
+]
+
+[[package]]
+name = "maia-local-intelligence-hypothesis-qualification"
+version = "0.1.0"
+dependencies = [
+ "maia-local-intelligence-diagnostics",
+ "maia-local-intelligence-health",
+ "maia-local-intelligence-hypothesis-generator",
+ "maia-local-intelligence-hypothesis-ledger",
+ "maia-local-model",
 ]
 
 [[package]]

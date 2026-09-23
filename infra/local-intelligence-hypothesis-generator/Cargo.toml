@@ -1,0 +1,14 @@
+[package]
+name = "maia-local-intelligence-hypothesis-generator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+maia-local-intelligence-diagnostics = { path = "../local-intelligence-diagnostics" }
+maia-local-intelligence-hypothesis-ledger = { path = "../local-intelligence-hypothesis-ledger" }
+sha2 = "0.10"
+
+[dev-dependencies]
+maia-local-intelligence-health = { path = "../local-intelligence-health" }
+maia-local-model = { path = "../local-model" }

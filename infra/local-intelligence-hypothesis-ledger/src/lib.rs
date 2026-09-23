@@ -6,10 +6,10 @@
 //! implementation details, provider wire protocols, or Round Table
 //! implementation.
 //!
-//! This is a **ledger of diagnostic evidence**, not yet a hypothesis
-//! generator, an autonomous investigator, a lifecycle supervisor, a repair
-//! planner, an action executor, a scheduler, or a model/LLM reasoning
-//! step. It has **no process-control authority** (see
+//! This ledger stores diagnostic observations and caller-produced proposed
+//! hypotheses. It does not generate or evaluate hypotheses, supervise a
+//! lifecycle, plan repairs, execute actions, schedule work, or call a model.
+//! It has **no process-control authority** (see
 //! `tests/capability_mesh.rs`).
 //!
 //! # Discovery (before implementation)
@@ -49,6 +49,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+/// Unchanged by M0.15.15's addition of the `hypotheses` table: a version
+/// bump is for when an EXISTING table's shape changes in a way that could
+/// break an older reader (`observations`' own shape is untouched here).
+/// Adding a new, independent table via `CREATE TABLE IF NOT EXISTS` is
+/// purely additive — an older binary opening a file with `hypotheses`
+/// already present simply never queries it; a newer binary opening an
+/// older file without it creates it fresh. Neither direction can conflict
+/// or corrupt data, so no migration and no version bump is needed.
 const SCHEMA_VERSION: i64 = 1;
 const MAX_OBSERVATION_ID_LEN: usize = 256;
 /// Sanity ceiling on any single bounded query or scan this crate performs,
@@ -63,11 +71,11 @@ pub enum LedgerError {
     /// An existing on-disk file's recorded schema version does not match
     /// this crate's `SCHEMA_VERSION`.
     SchemaVersionMismatch,
-    /// `observation_id` was empty or implausibly long, or a query window
-    /// was invalid (`until` not after `since`).
+    /// A caller-supplied ID was empty or implausibly long, a payload was
+    /// invalid, or a query window was invalid (`until` not after `since`).
     InvalidRecord,
     /// A read query failed at the storage layer, or a stored payload could
-    /// not be deserialized back into a `DiagnosticSnapshot` (a corrupt or
+    /// not be deserialized back into its typed record (a corrupt or
     /// foreign row) — either way, a typed error, never a panic and never a
     /// fabricated result.
     QueryFailed,
@@ -79,7 +87,10 @@ pub enum LedgerError {
 /// and retries with) — this crate only enforces uniqueness; it never
 /// invents identity on the caller's behalf, which would defeat the
 /// crash/retry idempotence this type exists for.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct ObservationId(String);
 impl ObservationId {
     pub fn new(value: impl Into<String>) -> Result<Self, LedgerError> {
@@ -116,6 +127,82 @@ pub enum RecordOutcome {
     /// existing one was left untouched. Callers that need the existing
     /// value can fetch it with `Ledger::get`.
     AlreadyExists,
+}
+
+/// A caller-supplied, stable identity for one submitted hypothesis — same
+/// validation and idempotence shape as `ObservationId` (M0.15.15). The
+/// caller derives this (e.g. deterministically from its input and evidence
+/// window, so a retried submission
+/// does not create a duplicate hypothesis record); this type only enforces
+/// uniqueness, never invents identity itself.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct HypothesisId(String);
+impl HypothesisId {
+    pub fn new(value: impl Into<String>) -> Result<Self, LedgerError> {
+        let value = value.into();
+        if value.is_empty() || value.len() > MAX_OBSERVATION_ID_LEN {
+            Err(LedgerError::InvalidRecord)
+        } else {
+            Ok(Self(value))
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A qualitative confidence value asserted by the caller. The ledger does
+/// not compute, validate, or endorse this assessment. No certainty or
+/// confirmation variant is offered by this persistence contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HypothesisConfidence {
+    Low,
+    Moderate,
+    High,
+}
+
+/// Storage status supplied with the record. `Proposed` is the only status
+/// available in this milestone; the ledger cannot promote or adjudicate it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HypothesisStatus {
+    Proposed,
+}
+
+/// One caller-submitted diagnostic hypothesis. Every assessment and claimed
+/// evidence relationship here is caller-supplied, never ledger-computed.
+///
+/// `explanation` is an interpretation, not evidence. The two evidence lists
+/// are supplied ID references only: this ledger does not check that those
+/// observations exist, are relevant, are independent, support or contradict
+/// the explanation, or establish causality. `subject` reuses
+/// `maia_local_intelligence_diagnostics::DiagnosticPattern` directly
+/// rather than introducing a parallel "observed condition" concept.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DiagnosticHypothesis {
+    pub hypothesis_id: HypothesisId,
+    pub subject: DiagnosticPattern,
+    pub explanation: String,
+    /// Caller-supplied references, not verified supporting evidence.
+    pub supporting_evidence: Vec<ObservationId>,
+    /// Caller-supplied references, not verified contradicting evidence.
+    pub contradicting_evidence: Vec<ObservationId>,
+    /// Caller assertion; no confidence calculation occurs in this crate.
+    pub confidence: HypothesisConfidence,
+    /// Caller-supplied account of what remains uncertain. Older records
+    /// pre-dating this field deserialize with an empty value.
+    #[serde(default)]
+    pub uncertainty: String,
+    /// Caller assertion; the ledger does not determine sufficiency.
+    pub evidence_sufficient: bool,
+    /// Caller-supplied timestamp of generation/submission.
+    pub generated_at: SystemTime,
+    /// Caller-supplied generator label. The ledger cannot verify its identity.
+    pub generator: String,
+    /// Caller-supplied status, restricted to `Proposed` in this milestone.
+    pub status: HypothesisStatus,
 }
 
 /// Bounds on how much evidence this ledger will ever hold — the ledger
@@ -315,7 +402,15 @@ impl Ledger {
                  payload_json TEXT NOT NULL
              );
              CREATE INDEX IF NOT EXISTS idx_observations_time
-                 ON observations(observed_at_ms);",
+                 ON observations(observed_at_ms);
+             CREATE TABLE IF NOT EXISTS hypotheses (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 hypothesis_id TEXT NOT NULL UNIQUE,
+                 generated_at_ms INTEGER NOT NULL,
+                 payload_json TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_hypotheses_time
+                 ON hypotheses(generated_at_ms);",
         )
         .map_err(|_| LedgerError::StorageUnavailable)?;
         conn.execute(
@@ -374,7 +469,13 @@ impl Ledger {
             RecordOutcome::AlreadyExists
         };
         if outcome == RecordOutcome::Recorded {
-            enforce_retention(&conn, self.retention, observation.observed_at)?;
+            enforce_retention(
+                &conn,
+                "observations",
+                "observed_at_ms",
+                self.retention,
+                observation.observed_at,
+            )?;
         }
         Ok(outcome)
     }
@@ -491,6 +592,135 @@ impl Ledger {
             latest_retained: max.map(time_from_millis),
             observation_count: count.max(0) as u64,
         })
+    }
+
+    /// Records one `DiagnosticHypothesis` (M0.15.15). Same atomic
+    /// create-only semantics as `record`: a single
+    /// `INSERT ... ON CONFLICT(hypothesis_id) DO NOTHING`, so a retried
+    /// submission attempt with the same `hypothesis_id` can never create a
+    /// duplicate record or overwrite the original.
+    /// All assessment fields and evidence references are stored as supplied;
+    /// this operation performs no evidence lookup or evaluation.
+    pub fn record_hypothesis(
+        &self,
+        hypothesis: &DiagnosticHypothesis,
+    ) -> Result<RecordOutcome, LedgerError> {
+        let payload = serde_json::to_string(hypothesis).map_err(|_| LedgerError::InvalidRecord)?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| LedgerError::StorageUnavailable)?;
+        let changed = conn
+            .execute(
+                "INSERT INTO hypotheses (hypothesis_id, generated_at_ms, payload_json)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(hypothesis_id) DO NOTHING",
+                params![
+                    hypothesis.hypothesis_id.as_str(),
+                    millis_since_epoch(hypothesis.generated_at),
+                    payload,
+                ],
+            )
+            .map_err(|_| LedgerError::StorageUnavailable)?;
+        let outcome = if changed == 1 {
+            RecordOutcome::Recorded
+        } else {
+            RecordOutcome::AlreadyExists
+        };
+        if outcome == RecordOutcome::Recorded {
+            enforce_retention(
+                &conn,
+                "hypotheses",
+                "generated_at_ms",
+                self.retention,
+                hypothesis.generated_at,
+            )?;
+        }
+        Ok(outcome)
+    }
+
+    /// Fetches one hypothesis by its identity, or `None` if it does not
+    /// exist.
+    pub fn get_hypothesis(
+        &self,
+        hypothesis_id: &HypothesisId,
+    ) -> Result<Option<DiagnosticHypothesis>, LedgerError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| LedgerError::StorageUnavailable)?;
+        conn.query_row(
+            "SELECT hypothesis_id, generated_at_ms, payload_json
+             FROM hypotheses WHERE hypothesis_id = ?1",
+            params![hypothesis_id.as_str()],
+            row_to_hypothesis,
+        )
+        .optional()
+        .map_err(|_| LedgerError::StorageUnavailable)?
+        .transpose()
+    }
+
+    /// The `limit` most recently generated hypotheses, most-recent-first.
+    /// Bounded to `MAX_BOUNDED_SCAN` regardless of the requested limit.
+    pub fn latest_hypotheses(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<DiagnosticHypothesis>, LedgerError> {
+        let bounded = limit.clamp(1, MAX_BOUNDED_SCAN);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| LedgerError::StorageUnavailable)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT hypothesis_id, generated_at_ms, payload_json
+                 FROM hypotheses
+                 ORDER BY generated_at_ms DESC, id DESC
+                 LIMIT ?1",
+            )
+            .map_err(|_| LedgerError::QueryFailed)?;
+        let rows = stmt
+            .query_map(params![bounded as i64], row_to_hypothesis)
+            .map_err(|_| LedgerError::QueryFailed)?;
+        collect_hypothesis_rows(rows)
+    }
+
+    /// Hypotheses generated in `[since, until]`, most-recent-first, bounded
+    /// to at most `limit` rows.
+    pub fn hypotheses_in_window(
+        &self,
+        since: SystemTime,
+        until: SystemTime,
+        limit: usize,
+    ) -> Result<Vec<DiagnosticHypothesis>, LedgerError> {
+        if until <= since {
+            return Err(LedgerError::InvalidRecord);
+        }
+        let bounded = limit.clamp(1, MAX_BOUNDED_SCAN);
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| LedgerError::StorageUnavailable)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT hypothesis_id, generated_at_ms, payload_json
+                 FROM hypotheses
+                 WHERE generated_at_ms >= ?1 AND generated_at_ms <= ?2
+                 ORDER BY generated_at_ms DESC, id DESC
+                 LIMIT ?3",
+            )
+            .map_err(|_| LedgerError::QueryFailed)?;
+        let rows = stmt
+            .query_map(
+                params![
+                    millis_since_epoch(since),
+                    millis_since_epoch(until),
+                    bounded as i64
+                ],
+                row_to_hypothesis,
+            )
+            .map_err(|_| LedgerError::QueryFailed)?;
+        collect_hypothesis_rows(rows)
     }
 
     /// The strict, adjacent-only consecutive-support read — see
@@ -635,23 +865,66 @@ fn collect_rows(
     Ok(out)
 }
 
+fn row_to_hypothesis(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<Result<DiagnosticHypothesis, LedgerError>> {
+    let stored_id: String = row.get(0)?;
+    let stored_ms: i64 = row.get(1)?;
+    let payload: String = row.get(2)?;
+    let hypothesis = serde_json::from_str::<DiagnosticHypothesis>(&payload)
+        .map_err(|_| LedgerError::QueryFailed)
+        .and_then(|hypothesis| {
+            if hypothesis.hypothesis_id.as_str() == stored_id
+                && millis_since_epoch(hypothesis.generated_at) == stored_ms
+            {
+                Ok(hypothesis)
+            } else {
+                Err(LedgerError::QueryFailed)
+            }
+        });
+    Ok(hypothesis)
+}
+
+fn collect_hypothesis_rows(
+    rows: rusqlite::MappedRows<
+        '_,
+        impl FnMut(&rusqlite::Row) -> rusqlite::Result<Result<DiagnosticHypothesis, LedgerError>>,
+    >,
+) -> Result<Vec<DiagnosticHypothesis>, LedgerError> {
+    let mut out = Vec::new();
+    for row in rows {
+        let hypothesis = row.map_err(|_| LedgerError::QueryFailed)??;
+        out.push(hypothesis);
+    }
+    Ok(out)
+}
+
 /// Deletes rows older than `retention.max_age` (relative to `now`), then
 /// deletes any rows beyond `retention.max_rows`, keeping the newest. Same
 /// discipline as `infra/local-intelligence-health::enforce_retention`.
+/// `table`/`time_column` are always one of this crate's own hardcoded
+/// (table, timestamp-column) pairs, never external input — generalized
+/// (M0.15.15) so the same bounded-retention logic covers both
+/// `observations` (`observed_at_ms`) and `hypotheses` (`generated_at_ms`)
+/// without duplicating it.
 fn enforce_retention(
     conn: &Connection,
+    table: &'static str,
+    time_column: &'static str,
     retention: RetentionPolicy,
     now: SystemTime,
 ) -> Result<(), LedgerError> {
     let cutoff = millis_since_epoch(now) - retention.max_age.as_millis() as i64;
     conn.execute(
-        "DELETE FROM observations WHERE observed_at_ms < ?1",
+        &format!("DELETE FROM {table} WHERE {time_column} < ?1"),
         params![cutoff],
     )
     .map_err(|_| LedgerError::StorageUnavailable)?;
     conn.execute(
-        "DELETE FROM observations WHERE id NOT IN \
-         (SELECT id FROM observations ORDER BY observed_at_ms DESC, id DESC LIMIT ?1)",
+        &format!(
+            "DELETE FROM {table} WHERE id NOT IN \
+             (SELECT id FROM {table} ORDER BY {time_column} DESC, id DESC LIMIT ?1)"
+        ),
         params![retention.max_rows as i64],
     )
     .map_err(|_| LedgerError::StorageUnavailable)?;
@@ -1131,5 +1404,192 @@ mod tests {
             .unwrap();
         assert_eq!(result.eligible_found, 3);
         assert!(!result.all_supported);
+    }
+
+    fn hypothesis(id: &str, generated_at: SystemTime) -> DiagnosticHypothesis {
+        DiagnosticHypothesis {
+            hypothesis_id: HypothesisId::new(id).unwrap(),
+            subject: DiagnosticPattern::RepeatedTimeout,
+            explanation: "A transport stall may explain the timeouts".into(),
+            supporting_evidence: vec![ObservationId::new("support").unwrap()],
+            contradicting_evidence: vec![ObservationId::new("counter").unwrap()],
+            confidence: HypothesisConfidence::Low,
+            uncertainty: "A cause has not been established".into(),
+            evidence_sufficient: false,
+            generated_at,
+            generator: "deterministic-test".into(),
+            status: HypothesisStatus::Proposed,
+        }
+    }
+
+    #[test]
+    fn hypothesis_round_trips_as_a_proposal_with_explicit_uncertainty() {
+        let ledger = ledger();
+        let original = hypothesis("h1", at(100));
+        assert_eq!(
+            ledger.record_hypothesis(&original),
+            Ok(RecordOutcome::Recorded)
+        );
+        assert_eq!(
+            ledger.get_hypothesis(&original.hypothesis_id),
+            Ok(Some(original))
+        );
+    }
+
+    #[test]
+    fn duplicate_hypothesis_id_keeps_the_first_record() {
+        let ledger = ledger();
+        let original = hypothesis("h1", at(100));
+        let mut retry = original.clone();
+        retry.explanation = "different retry output".into();
+        assert_eq!(
+            ledger.record_hypothesis(&original),
+            Ok(RecordOutcome::Recorded)
+        );
+        assert_eq!(
+            ledger.record_hypothesis(&retry),
+            Ok(RecordOutcome::AlreadyExists)
+        );
+        assert_eq!(
+            ledger.get_hypothesis(&original.hypothesis_id),
+            Ok(Some(original))
+        );
+    }
+
+    #[test]
+    fn asserted_assessments_and_unvalidated_references_are_stored_verbatim() {
+        let ledger = ledger();
+        let mut submitted = hypothesis("unverified", at(100));
+        submitted.confidence = HypothesisConfidence::High;
+        submitted.evidence_sufficient = true;
+        // Neither referenced observation has been inserted. The ledger is
+        // persistence only: these remain caller assertions and references.
+        assert_eq!(ledger.coverage().unwrap().observation_count, 0);
+        assert_eq!(
+            ledger.record_hypothesis(&submitted),
+            Ok(RecordOutcome::Recorded)
+        );
+        assert_eq!(
+            ledger.get_hypothesis(&submitted.hypothesis_id),
+            Ok(Some(submitted))
+        );
+        assert_eq!(ledger.coverage().unwrap().observation_count, 0);
+    }
+
+    #[test]
+    fn hypothesis_survives_reopen_and_legacy_observation_schema_is_additive() {
+        let path = std::env::temp_dir().join(format!(
+            "maia-hypothesis-ledger-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        {
+            let legacy = Connection::open(&path).unwrap();
+            legacy
+                .execute_batch(
+                    "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO schema_meta(key, value) VALUES ('version', '1');
+                 CREATE TABLE observations (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     observation_id TEXT NOT NULL UNIQUE,
+                     observed_at_ms INTEGER NOT NULL,
+                     payload_json TEXT NOT NULL
+                 );",
+                )
+                .unwrap();
+        }
+        let submitted = hypothesis("persisted", at(100));
+        {
+            let ledger = Ledger::open(&path, RetentionPolicy::default()).unwrap();
+            assert_eq!(
+                ledger.record_hypothesis(&submitted),
+                Ok(RecordOutcome::Recorded)
+            );
+        }
+        let reopened = Ledger::open(&path, RetentionPolicy::default()).unwrap();
+        assert_eq!(
+            reopened.get_hypothesis(&submitted.hypothesis_id),
+            Ok(Some(submitted))
+        );
+        drop(reopened);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn inconsistent_hypothesis_row_fails_closed() {
+        let ledger = ledger();
+        ledger
+            .record_hypothesis(&hypothesis("original", at(100)))
+            .unwrap();
+        ledger
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE hypotheses SET hypothesis_id = 'altered' WHERE hypothesis_id = 'original'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            ledger
+                .get_hypothesis(&HypothesisId::new("altered").unwrap())
+                .err(),
+            Some(LedgerError::QueryFailed)
+        );
+    }
+
+    #[test]
+    fn pre_uncertainty_hypothesis_payload_remains_readable() {
+        let original = hypothesis("older", at(100));
+        let mut value = serde_json::to_value(&original).unwrap();
+        value.as_object_mut().unwrap().remove("uncertainty");
+        let legacy: DiagnosticHypothesis = serde_json::from_value(value).unwrap();
+        assert!(legacy.uncertainty.is_empty());
+        assert_eq!(legacy.hypothesis_id, original.hypothesis_id);
+        assert_eq!(legacy.supporting_evidence, original.supporting_evidence);
+    }
+
+    #[test]
+    fn hypothesis_queries_are_bounded_and_retention_is_separate() {
+        let ledger = Ledger::open_in_memory(RetentionPolicy {
+            max_rows: 3,
+            max_age: Duration::from_secs(1_000),
+        })
+        .unwrap();
+        ledger
+            .record(&observation("observation", at(1), healthy_snapshot()))
+            .unwrap();
+        for i in 0..5 {
+            ledger
+                .record_hypothesis(&hypothesis(&format!("h{i}"), at(i + 1)))
+                .unwrap();
+        }
+        assert_eq!(
+            ledger
+                .latest_hypotheses(2)
+                .unwrap()
+                .iter()
+                .map(|h| h.hypothesis_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["h4", "h3"]
+        );
+        assert_eq!(
+            ledger.hypotheses_in_window(at(2), at(4), 10).unwrap().len(),
+            2
+        );
+        assert_eq!(ledger.latest_hypotheses(10).unwrap().len(), 3);
+        assert!(
+            ledger
+                .get(&ObservationId::new("observation").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            ledger.hypotheses_in_window(at(5), at(5), 1).err(),
+            Some(LedgerError::InvalidRecord)
+        );
     }
 }

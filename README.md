@@ -11,7 +11,7 @@ Public history begins with a sanitized open-source baseline of the actual, activ
 - A Rust-centered workspace with Python specification and development-governance tooling.
 - OS-neutral domain, policy, orchestration, store ports, runtime and executor boundaries, plus a SQLite adapter.
 - Local-model runtime adapters, advisory briefing and experimental desktop/host applications.
-- Local intelligence health, diagnostics, hypothesis-evidence ledger and recorder components.
+- Local intelligence health, diagnostics, hypothesis-evidence ledger, recorder, and read-only diagnostic hypothesis generation/qualification components.
 - Provider-agnostic consultation contracts and an optional Round Table module for multi-model review. Concrete adapters own provider and credential access.
 - Canonical YAML specifications, generated contracts, ADRs and executable architecture dependency guards.
 
