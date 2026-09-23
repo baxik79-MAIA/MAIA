@@ -9,7 +9,11 @@ use std::process::{Command, Output};
 
 use maia_domain::ReasoningAssuranceLevel;
 use maia_roundtable::{
-    DecisionRequest, RoundTableDecision, SessionFailureKind, SessionRecord, SessionStore,
+    ContributionFailureReason, ContributionResult, ContributionRole, DecisionRequest, Disagreement,
+    InsufficientAssurance, LeaderSelection, ModelProvider, ModelRef, ParticipantDescriptor,
+    ParticipantFailureKind, ParticipantId, ParticipantOutcome, ParticipantResponse,
+    QuorumReasonCode, RoundTableDecision, SessionFailureKind, SessionRecord, SessionStore,
+    Timestamp,
 };
 use maia_roundtable_store::FileSessionStore;
 
@@ -99,6 +103,144 @@ fn fingerprint(dir: &Path) -> Vec<(String, Vec<u8>)> {
 
 fn dir_str(p: &Path) -> String {
     p.to_string_lossy().into_owned()
+}
+
+// Entirely invented records: no provider invocation or captured live evidence.
+fn synthetic_record(decided: bool) -> SessionRecord {
+    let mut record = if decided {
+        decided_record()
+    } else {
+        failed_record()
+    };
+    record.id = format!("synthetic-{}", record.id);
+    record.decision.subject = "Synthetic widget decision".into();
+    record.decision.prompt = "Synthetic prompt: compare invented widgets.".into();
+    for sequence in 0..2 {
+        let participant = ParticipantDescriptor {
+            id: ParticipantId::new(format!("synthetic-participant-{sequence}")).unwrap(),
+            provider: ModelProvider::new("synthetic-provider").unwrap(),
+            model: ModelRef::new(format!("synthetic-configured-{sequence}")).unwrap(),
+        };
+        let result = if !decided && sequence == 1 {
+            ContributionResult::Failed {
+                kind: ParticipantFailureKind::Transient,
+                reason: ContributionFailureReason::ParticipantUnavailable,
+                provider_request_id: Some("synthetic-failed-request".into()),
+            }
+        } else {
+            ContributionResult::Responded(ParticipantResponse {
+                participant: participant.clone(),
+                response_text: "Synthetic response".into(),
+                evidence: vec![],
+                provider_request_id: (sequence == 0).then(|| "synthetic-response-request".into()),
+                usage: None,
+                model_ref_used: (sequence == 0)
+                    .then(|| ModelRef::new("synthetic-served-0").unwrap()),
+            })
+        };
+        record.outcomes.push(ParticipantOutcome {
+            participant,
+            role: ContributionRole::FirstRound,
+            sequence,
+            started_at: Timestamp(100),
+            finished_at: Timestamp(125),
+            first_round_isolated: true,
+            result,
+        });
+    }
+    if decided {
+        record.leader = Some(LeaderSelection {
+            leader: record.outcomes[0].participant.clone(),
+            considered: 2,
+            eligible: 1,
+            assurance: record.assurance,
+        });
+        record.disagreements.push(Disagreement {
+            id: "synthetic-disagreement".into(),
+            participants: record
+                .outcomes
+                .iter()
+                .map(|o| o.participant.id.clone())
+                .collect(),
+            summary: "Synthetic widgets differ in color".into(),
+            evidence: vec![],
+        });
+        let adjudication = record.adjudication.as_mut().unwrap();
+        adjudication.session_id = record.id.clone();
+        adjudication.conclusion = "Synthetic conclusion: inspect both widgets".into();
+        adjudication.disagreement_ids = vec!["synthetic-disagreement".into()];
+    } else {
+        record.failure = Some(SessionFailureKind::QuorumNotMet(InsufficientAssurance {
+            assurance: record.assurance,
+            required_responses: 2,
+            achieved_responses: 1,
+            attempted_participants: 2,
+            reason_code: QuorumReasonCode::ParticipantUnavailable,
+        }));
+    }
+    record
+}
+
+#[test]
+fn synthetic_stored_records_correspond_to_cli_show_and_list_without_writes() {
+    let cwd = scratch("synthetic-correspondence-cwd");
+    let dir = scratch("synthetic-correspondence-history");
+    let store = FileSessionStore::new(&dir);
+    let records = [synthetic_record(true), synthetic_record(false)];
+    for record in &records {
+        store.save(record).unwrap();
+    }
+    let before = fingerprint(&dir);
+    let h = dir_str(&dir);
+    for (record, decided) in records.iter().zip([true, false]) {
+        let out = viewer(&cwd, &["--history", &h, "show", &record.id]);
+        assert_eq!(out.status.code(), Some(0));
+        assert!(out.stderr.is_empty());
+        let panel = text(&out.stdout);
+        for expected in [
+            format!("Session {}", record.id),
+            format!("Subject: {}", record.decision.subject),
+            format!("Prompt: {}", record.decision.prompt),
+            "#0 synthetic-participant-0 (synthetic-provider) — responded".into(),
+            "model configured: synthetic-configured-0; model served: synthetic-served-0; request id: synthetic-response-request; 25 ms; first round isolated".into(),
+            "model configured: synthetic-configured-1; model served: not reported by provider".into(),
+            "Execution authority: none".into(),
+        ] {
+            assert!(panel.contains(&expected), "missing {expected:?} in {panel}");
+        }
+        assert!(!panel.contains("INVARIANT VIOLATION"));
+        if decided {
+            assert!(panel.contains("#1 synthetic-participant-1 (synthetic-provider) — responded"));
+            assert!(panel.contains("request id: not reported by provider"));
+            assert!(panel.contains("Leader: synthetic-participant-0 (synthetic-provider)"));
+            assert!(panel.contains("1 of 2 candidates were eligible to lead"));
+            assert!(panel.contains(&format!("  - {}", record.disagreements[0].summary)));
+            assert!(panel.contains(&format!(
+                "Conclusion: {}",
+                record.adjudication.as_ref().unwrap().conclusion
+            )));
+        } else {
+            assert!(
+                panel.contains("#1 synthetic-participant-1 (synthetic-provider) — unavailable")
+            );
+            assert!(panel.contains("request id: synthetic-failed-request"));
+            assert!(panel.contains("1 contribution(s) did not respond"));
+            assert!(panel.contains("Leader: none"));
+            assert!(panel.contains("Disagreements: none recorded"));
+            assert!(panel.contains("Conclusion: none — this session did not reach a decision"));
+        }
+    }
+    let out = viewer(&cwd, &["--history", &h, "list"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stderr.is_empty());
+    let listing = text(&out.stdout);
+    assert!(listing.contains("2 session(s)"));
+    assert!(listing.contains("synthetic-session-decided  [decided, 2/2 responded]  A3  leader: synthetic-participant-0  Synthetic widget decision"));
+    assert!(listing.contains("synthetic-session-failed  [failed closed, 1/2 responded]  A3  leader: none  Synthetic widget decision"));
+    assert_eq!(before, fingerprint(&dir));
+    assert_eq!(std::fs::read_dir(&cwd).unwrap().count(), 0);
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::remove_dir_all(&cwd).unwrap();
 }
 
 // ------------------------------------------------------------------- usage
