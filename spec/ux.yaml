@@ -1,0 +1,74 @@
+schema_version: 1
+zones:
+  command_center:
+  - today_brief
+  - what_changed
+  - needs_your_decision
+  - waiting_for_others
+  - you_promised
+  - at_risk
+  - maia_can_handle
+  - completed_for_you
+  - priority_inbox
+  - commitments
+  - meetings
+  - awaiting_approvals
+  conversation:
+  - chat_with_maia
+  - task_trace
+  - sources
+  - approval_cards
+  mail:
+  - thread_summary
+  - why_it_matters
+  - draft
+  - commitments
+  - relationship_context
+  workgraph:
+  - people
+  - projects
+  - threads
+  - decisions
+  - commitments
+  - timeline
+  settings:
+  - connectors
+  - models
+  - credentials
+  - policies
+  - memory
+  - scheduler
+  - mcp
+  - audit
+surfaces:
+- desktop
+- teams
+- outlook_addin
+- m365_copilot_future
+- api_mcp
+async_states:
+- idle
+- loading
+- success
+- error
+- canceled
+- awaiting_approval
+rules:
+- same_task_identity_across_surfaces
+- approval_card_shows_exact_side_effect
+- no_color_only_status
+- keyboard_accessible
+- dark_light_ready
+- inferred_state_shows_source_or_evidence_access_and_inference_status
+- inbox_is_source_drill_down_not_product_home
+activation:
+  default_question_first_experience: forbidden
+  first_value_goal: source_linked_operational_view
+  qualifying_value_excludes:
+  - application_open
+  - data_import_without_user_work_value
+  - generic_text_generation
+  - model_response_success
+  metrics:
+  - time_to_first_value
+  - time_to_first_action

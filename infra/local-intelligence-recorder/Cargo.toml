@@ -1,0 +1,17 @@
+[package]
+name = "maia-local-intelligence-recorder"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[[bin]]
+name = "local-intelligence-recorder"
+path = "src/bin/recorder_cli.rs"
+
+[dependencies]
+maia-local-intelligence-diagnostics = { path = "../local-intelligence-diagnostics" }
+maia-local-intelligence-health = { path = "../local-intelligence-health" }
+maia-local-intelligence-hypothesis-ledger = { path = "../local-intelligence-hypothesis-ledger" }
+
+[dev-dependencies]
+maia-local-model = { path = "../local-model" }

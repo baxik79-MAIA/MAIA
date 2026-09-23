@@ -1,0 +1,247 @@
+{
+  "valid": [
+    {
+      "name": "fixed_large_versions_utf8_sort",
+      "input": {
+        "schema": "maia.action-binding.v1",
+        "action_id": "01900000-0000-7000-8000-000000000000",
+        "action_version": "9007199254740992",
+        "plan_id": "01900000-0000-7000-8000-000000000000",
+        "plan_version": "18446744073709551615",
+        "ordinal": 0,
+        "action_type": "mail.send",
+        "input_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_canonicalizer": {
+          "id": "mail.input",
+          "version": "9007199254740993"
+        },
+        "connector_selection": "fixed",
+        "connector_profile_id": "01900000-0000-7000-8000-000000000000",
+        "connector_binding_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tool_definition_fingerprint": null,
+        "risk_class": "send_external",
+        "source_preconditions": [
+          {
+            "external_id": "𐀀",
+            "source_version_token": "v1",
+            "normalized_payload_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          {
+            "external_id": "",
+            "source_version_token": "v1",
+            "normalized_payload_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ]
+      },
+      "canonical": "{\"action_id\":\"01900000-0000-7000-8000-000000000000\",\"action_type\":\"mail.send\",\"action_version\":\"9007199254740992\",\"connector_binding_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"connector_profile_id\":\"01900000-0000-7000-8000-000000000000\",\"connector_selection\":\"fixed\",\"input_canonicalizer\":{\"id\":\"mail.input\",\"version\":\"9007199254740993\"},\"input_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"ordinal\":0,\"plan_id\":\"01900000-0000-7000-8000-000000000000\",\"plan_version\":\"18446744073709551615\",\"risk_class\":\"send_external\",\"schema\":\"maia.action-binding.v1\",\"source_preconditions\":[{\"external_id\":\"\",\"normalized_payload_hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"source_version_token\":\"v1\"},{\"external_id\":\"𐀀\",\"normalized_payload_hash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"source_version_token\":\"v1\"}],\"tool_definition_fingerprint\":null}",
+      "sha256": "2ca703e69d78451e5cfd951d4bf48d397fe32b3659ebcd5359936f2ec2484db5"
+    },
+    {
+      "name": "fixed_read",
+      "input": {
+        "schema": "maia.action-binding.v1",
+        "action_id": "01900000-0000-7000-8000-000000000000",
+        "action_version": "9007199254740992",
+        "plan_id": "01900000-0000-7000-8000-000000000000",
+        "plan_version": "18446744073709551615",
+        "ordinal": 0,
+        "action_type": "mail.send",
+        "input_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_canonicalizer": {
+          "id": "mail.input",
+          "version": "9007199254740993"
+        },
+        "connector_selection": "fixed",
+        "connector_profile_id": "01900000-0000-7000-8000-000000000000",
+        "connector_binding_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tool_definition_fingerprint": null,
+        "risk_class": "read",
+        "source_preconditions": [
+          {
+            "external_id": "𐀀",
+            "source_version_token": "v1",
+            "normalized_payload_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          {
+            "external_id": "",
+            "source_version_token": "v1",
+            "normalized_payload_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ]
+      },
+      "canonical": "{\"action_id\":\"01900000-0000-7000-8000-000000000000\",\"action_type\":\"mail.send\",\"action_version\":\"9007199254740992\",\"connector_binding_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"connector_profile_id\":\"01900000-0000-7000-8000-000000000000\",\"connector_selection\":\"fixed\",\"input_canonicalizer\":{\"id\":\"mail.input\",\"version\":\"9007199254740993\"},\"input_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"ordinal\":0,\"plan_id\":\"01900000-0000-7000-8000-000000000000\",\"plan_version\":\"18446744073709551615\",\"risk_class\":\"read\",\"schema\":\"maia.action-binding.v1\",\"source_preconditions\":[{\"external_id\":\"\",\"normalized_payload_hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"source_version_token\":\"v1\"},{\"external_id\":\"𐀀\",\"normalized_payload_hash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"source_version_token\":\"v1\"}],\"tool_definition_fingerprint\":null}",
+      "sha256": "0b5be32910a795e4a5d3d72b3ec8b92caa583744c71f44b8c9e3d694dc4383c0"
+    },
+    {
+      "name": "routed_read",
+      "input": {
+        "schema": "maia.action-binding.v1",
+        "action_id": "01900000-0000-7000-8000-000000000000",
+        "action_version": "9007199254740992",
+        "plan_id": "01900000-0000-7000-8000-000000000000",
+        "plan_version": "18446744073709551615",
+        "ordinal": 0,
+        "action_type": "mail.send",
+        "input_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_canonicalizer": {
+          "id": "mail.input",
+          "version": "9007199254740993"
+        },
+        "connector_selection": "policy_routed",
+        "connector_profile_id": "01900000-0000-7000-8000-000000000000",
+        "connector_binding_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "tool_definition_fingerprint": null,
+        "risk_class": "read",
+        "source_preconditions": [
+          {
+            "external_id": "𐀀",
+            "source_version_token": "v1",
+            "normalized_payload_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          {
+            "external_id": "",
+            "source_version_token": "v1",
+            "normalized_payload_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ]
+      },
+      "canonical": "{\"action_id\":\"01900000-0000-7000-8000-000000000000\",\"action_type\":\"mail.send\",\"action_version\":\"9007199254740992\",\"connector_binding_hash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"connector_profile_id\":\"01900000-0000-7000-8000-000000000000\",\"connector_selection\":\"policy_routed\",\"input_canonicalizer\":{\"id\":\"mail.input\",\"version\":\"9007199254740993\"},\"input_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"ordinal\":0,\"plan_id\":\"01900000-0000-7000-8000-000000000000\",\"plan_version\":\"18446744073709551615\",\"risk_class\":\"read\",\"schema\":\"maia.action-binding.v1\",\"source_preconditions\":[{\"external_id\":\"\",\"normalized_payload_hash\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"source_version_token\":\"v1\"},{\"external_id\":\"𐀀\",\"normalized_payload_hash\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"source_version_token\":\"v1\"}],\"tool_definition_fingerprint\":null}",
+      "sha256": "f939b9624aa612c552499a565041b5ca95d2700fd788671dd902bc210bbac710"
+    },
+    {
+      "name": "connectorless_explicit_nulls",
+      "input": {
+        "schema": "maia.action-binding.v1",
+        "action_id": "01900000-0000-7000-8000-000000000000",
+        "action_version": "9007199254740992",
+        "plan_id": "01900000-0000-7000-8000-000000000000",
+        "plan_version": "18446744073709551615",
+        "ordinal": 0,
+        "action_type": "mail.send",
+        "input_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "input_canonicalizer": {
+          "id": "mail.input",
+          "version": "9007199254740993"
+        },
+        "connector_selection": "none",
+        "connector_profile_id": null,
+        "connector_binding_hash": null,
+        "tool_definition_fingerprint": null,
+        "risk_class": "read",
+        "source_preconditions": []
+      },
+      "canonical": "{\"action_id\":\"01900000-0000-7000-8000-000000000000\",\"action_type\":\"mail.send\",\"action_version\":\"9007199254740992\",\"connector_binding_hash\":null,\"connector_profile_id\":null,\"connector_selection\":\"none\",\"input_canonicalizer\":{\"id\":\"mail.input\",\"version\":\"9007199254740993\"},\"input_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"ordinal\":0,\"plan_id\":\"01900000-0000-7000-8000-000000000000\",\"plan_version\":\"18446744073709551615\",\"risk_class\":\"read\",\"schema\":\"maia.action-binding.v1\",\"source_preconditions\":[],\"tool_definition_fingerprint\":null}",
+      "sha256": "973ec120248777dfb2fff9ac1022287456a44bad68dc9c7553a3246f200dc478"
+    }
+  ],
+  "mutations": {
+    "action_id": "01900000-0000-7000-8000-000000000001",
+    "action_version": "9007199254740993",
+    "plan_id": "01900000-0000-7000-8000-000000000002",
+    "plan_version": "18446744073709551614",
+    "ordinal": 4294967295,
+    "action_type": "mail.forward",
+    "input_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "input_canonicalizer": {
+      "id": "mail.input",
+      "version": "9007199254740994"
+    },
+    "connector_profile_id": "01900000-0000-7000-8000-000000000003",
+    "connector_binding_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "tool_definition_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000",
+    "risk_class": "send_internal",
+    "source_preconditions": [
+      {
+        "external_id": "new",
+        "source_version_token": "v2",
+        "normalized_payload_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  "invalid": [
+    {
+      "name": "schema_is_fixed",
+      "changes": {
+        "schema": "maia.action-binding.v2"
+      }
+    },
+    {
+      "name": "unknown_selection",
+      "changes": {
+        "connector_selection": "late"
+      }
+    },
+    {
+      "name": "material_policy_route",
+      "changes": {
+        "connector_selection": "policy_routed"
+      }
+    },
+    {
+      "name": "missing_fixed_profile",
+      "changes": {
+        "connector_profile_id": null
+      }
+    },
+    {
+      "name": "missing_fixed_hash",
+      "changes": {
+        "connector_binding_hash": null
+      }
+    },
+    {
+      "name": "bad_version_9007199254740993",
+      "changes": {
+        "action_version": 9007199254740993
+      }
+    },
+    {
+      "name": "bad_version_0",
+      "changes": {
+        "action_version": "0"
+      }
+    },
+    {
+      "name": "bad_version_01",
+      "changes": {
+        "action_version": "01"
+      }
+    },
+    {
+      "name": "bad_version_+1",
+      "changes": {
+        "action_version": "+1"
+      }
+    },
+    {
+      "name": "bad_version_1.0",
+      "changes": {
+        "action_version": "1.0"
+      }
+    },
+    {
+      "name": "bad_version_18446744073709551616",
+      "changes": {
+        "action_version": "18446744073709551616"
+      }
+    },
+    {
+      "name": "bad_ordinal_-1",
+      "changes": {
+        "ordinal": -1
+      }
+    },
+    {
+      "name": "bad_ordinal_4294967296",
+      "changes": {
+        "ordinal": 4294967296
+      }
+    },
+    {
+      "name": "bad_ordinal_1.5",
+      "changes": {
+        "ordinal": 1.5
+      }
+    }
+  ]
+}

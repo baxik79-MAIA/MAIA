@@ -1,0 +1,39 @@
+schema_version: 1
+codes:
+- InvalidStateTransition
+- ApprovalRequired
+- ApprovalExpired
+- PolicyBlocked
+- PrivacyBlocked
+- CapabilityMissing
+- ConnectorUnavailable
+- CredentialMissing
+- CredentialRejected
+- RateLimited
+- Timeout
+- Canceled
+- ExternalConflict
+- RecipientRisk
+- AttachmentRisk
+- PromptInjectionSuspected
+- McpToolBlocked
+- SyncCursorInvalid
+- SubscriptionExpired
+- DuplicateAction
+- UnknownCost
+- PersistenceError
+- MigrationError
+- ValidationError
+- UnsupportedClient
+- InternalError
+rules:
+- provider_or_connector_errors_map_to_canonical_code
+- raw_error_is_sanitized
+- retryability_is_explicit
+- user_message_uses_i18n_key
+persistence_semantics:
+  cas_mismatch: ExternalConflict
+  corruption: fail_closed
+  migration_incompatibility: MigrationError
+  unavailable_writable_authority: PersistenceError
+  exhausted_storage_busy: PersistenceError

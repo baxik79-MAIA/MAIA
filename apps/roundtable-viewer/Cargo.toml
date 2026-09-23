@@ -1,0 +1,33 @@
+[package]
+name = "maia-roundtable-viewer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+# A read-only command-line viewer over Round Table session history.
+#
+# This is a Round Table implementation crate, NOT a shipped application. It is
+# deliberately outside the `APPS` set in roundtable/tests/core_independence.rs
+# (apps/desktop and apps/local-briefing-host), so a DEPLOYMENT_LOCKED build never
+# contains it. It is the composition point that picks a storage backend for the
+# read contract, which is why it may depend on the store while the observability
+# model may not.
+#
+# It has no path to invoke a provider: it depends on neither the composition
+# layer nor any provider adapter, and D009 asserts that.
+
+[dependencies]
+maia-roundtable = { path = "../../roundtable" }
+maia-roundtable-observability = { path = "../../composition/roundtable-observability" }
+maia-roundtable-store = { path = "../../infra/roundtable-store" }
+
+[dev-dependencies]
+maia-domain = { path = "../../core/domain" }
+
+[lib]
+name = "maia_roundtable_viewer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "maia-roundtable-viewer"
+path = "src/main.rs"

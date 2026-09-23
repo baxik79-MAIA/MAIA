@@ -1,0 +1,50 @@
+schema_version: 1
+strategies:
+  outlook_classic_com: event_or_poll_based_best_effort with bounded scans and stable entry IDs when available
+  microsoft_graph_mail: delta query per mail folder plus change notifications where deployment permits
+  microsoft_graph_teams: change notifications/subscriptions plus targeted fetch
+  calendar: delta/change notifications when available
+delivery_semantics: at_least_once; deduplicate by connector + external_id + version/change token
+idempotency:
+- incoming_event_key
+- action_idempotency_key
+- webhook_replay_guard
+- send_action_draft_hash
+recovery:
+- subscription_renewal
+- lifecycle_notifications
+- missed_notification_resync
+- delta_token_reset_requires_bounded_full_resync
+pre_side_effect_freshness:
+  applies_to:
+  - reply_or_forward_based_on_mutable_message
+  - send_existing_draft
+  - calendar_update_or_cancel
+  - side_effect_using_mutable_external_object
+  stored_tokens:
+  - connector_external_id
+  - source_version_token
+  - normalized_payload_hash
+  graph_mail_version_sources:
+  - changeKey
+  - '@odata.etag_when_returned'
+  rule: Immediately before material side effect, re-read/conditionally validate the source version. If the connector
+    does not document a strong If-Match precondition for that operation, perform compare-before-execute and fail
+    closed on mismatch.
+  on_mismatch:
+  - block_execution
+  - invalidate_stale_binding_per_approval_mutation_policy
+  - build_material_revision_per_action_binding_contract
+  approval_mutation_policy_ref: spec/approval.yaml#concurrency.mutation_policy
+  send_note: Microsoft Graph send-draft is POST and does not document If-Match on that operation; MAIA MUST NOT
+    assume conditional-send support.
+  build_order_ref: spec/action_binding.yaml#material_revision_build_order
+  evidence_contract_ref: spec/execution.yaml#freshness
+side_effect_reconciliation:
+  rule: A timeout/disconnect after a non-idempotent side effect may create outcome_unknown. Do not automatically
+    retry until connector-specific reconciliation proves whether the effect happened.
+  recommended_send_marker: Where connector permits, stamp a stable MAIA action/idempotency marker on the draft before
+    send and search/reconcile by that marker after ambiguous outcomes.
+  action_state: reconciling
+  run_state: outcome_unknown -> reconciling
+  evidence_contract_ref: spec/execution.yaml#reconciliation

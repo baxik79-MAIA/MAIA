@@ -1,0 +1,70 @@
+schema_version: 1
+workspace_tenant_scope:
+  personal_local:
+    tenant_required: false
+    commercial_mode: false
+  commercial_organizational:
+    tenant_required: true
+    membership_required_for_multi_user_access: true
+    missing_tenant_behavior: fail_closed
+boundaries:
+  tenant: security_policy_and_commercial_boundary_in_commercial_organizational_mode
+  workspace: operational_context_that_may_be_personal_local_without_tenant
+  membership: authenticated_user_or_person_role_binding_for_commercial_organizational_mode
+  entitlement: centralized_capability_or_feature_seam_not_core_pricing_logic
+principles:
+- no_pricing_logic_in_core_domain
+- no_premature_multitenant_runtime_infrastructure
+- usage_is_metered_when_observable
+- unknown_cost_or_human_effort_is_not_zero
+- product_analytics_exclude_raw_customer_content_by_default
+- g2_g3_g4_are_governance_or_strategy_gates_not_runtime_fsms
+usage:
+  cost_statuses:
+  - known
+  - unknown
+  cost_rules:
+    known_requires_cost_minor_and_currency: true
+    unknown_forbids_implied_zero: true
+  types:
+  - model_input_tokens
+  - model_output_tokens
+  - model_request
+  - tool_call
+  - connector_operation
+  - compute_ms
+  - storage_bytes
+  - external_api_cost
+  - human_intervention
+  - support_manual_execution
+human_intervention:
+  categories:
+  - user_review_or_correction
+  - operator_support_or_manual_service
+  observable_or_explicitly_recorded_only: true
+  passive_dwell_time_is_precise_labor_measurement: false
+  monetary_cost_requires_explicit_rate_or_cost_basis: true
+  absent_rate_or_cost_basis: monetary_cost_unknown
+commercial_readiness_gates:
+  G2:
+    name: FORM COMPANY NOW
+    kind: founder_legal_governance_alert
+    trigger_before_earliest_of:
+    - first_paid_production_pilot_with_external_customer
+    - first_recurring_b2b_commercial_contract
+    - external_customer_production_data_processing_beyond_controlled_non_production_demonstration
+    behavior: stop_commercial_progression_and_alert_founder
+    legal_form_selection: founder_legal_accounting_decision_not_canonical_spec
+  G3:
+    name: FUNDING READINESS
+    kind: strategic_non_runtime_gate
+    evidence:
+    - repeatable_paid_value
+    - retention_or_renewal_evidence
+    - measured_product_advantage
+    - sufficiently_understood_unit_economics
+    alert: structured_fundraising_preparation_should_begin
+  G4:
+    name: SCALE CAPITAL
+    kind: strategic_non_runtime_gate
+    rule: capital_accelerates_demonstrated_demand_and_scale_not_absent_product_market_evidence

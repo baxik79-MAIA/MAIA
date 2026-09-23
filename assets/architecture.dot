@@ -1,0 +1,14 @@
+digraph G {
+rankdir=TB; graph [bgcolor="white", pad="0.2", nodesep="0.35", ranksep="0.45"]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, color="#596273", fillcolor="#F5F7FA"]; edge [color="#77808F", arrowsize=.7];
+subgraph cluster_surface {label="Surfaces"; color="#AEB6C2"; "Desktop Command Center"; "Microsoft Teams"; "Outlook Add-in"; "API / MCP clients";}
+"Managed Channel Adapter" [fillcolor="#E9F1FF"]; "Outbound Relay (local-authority only)" [fillcolor="#FFF4D6"]; "Interaction Gateway" [fillcolor="#E9F1FF"];
+"MAIA Agent Runtime" [fillcolor="#DCEBFF", fontsize=12];
+subgraph cluster_core {label="Core intelligence"; color="#AEB6C2"; "Planner / Executor"; "Approval & Policy Gates"; "WorkGraph"; "Mail Intelligence"; "Commitment Engine"; "Relationship Intelligence"; "Memory Engine"; "Scheduler"; "Model Router";}
+subgraph cluster_tools {label="Connectors / Tools"; color="#AEB6C2"; "Outlook Classic / TrustedBridge"; "Microsoft Graph"; "MCP Client"; "Local Files / Sandbox";}
+subgraph cluster_data {label="Persistence & security"; color="#AEB6C2"; "SQLite + FTS (local authority)"; "Managed PostgreSQL (enterprise authority)"; "OS / Enterprise Vault"; "Audit Log";}
+"Microsoft Teams"->"Managed Channel Adapter"; "Managed Channel Adapter"->"Interaction Gateway" [label="managed core"]; "Managed Channel Adapter"->"Outbound Relay (local-authority only)"; "Outbound Relay (local-authority only)"->"Interaction Gateway"; "Desktop Command Center"->"Interaction Gateway"; "Outlook Add-in"->"Interaction Gateway"; "API / MCP clients"->"Interaction Gateway";
+"Interaction Gateway"->"MAIA Agent Runtime";
+"MAIA Agent Runtime"->"Planner / Executor"; "MAIA Agent Runtime"->"Approval & Policy Gates"; "MAIA Agent Runtime"->"WorkGraph"; "MAIA Agent Runtime"->"Mail Intelligence"; "MAIA Agent Runtime"->"Commitment Engine"; "MAIA Agent Runtime"->"Relationship Intelligence"; "MAIA Agent Runtime"->"Memory Engine"; "MAIA Agent Runtime"->"Scheduler"; "MAIA Agent Runtime"->"Model Router";
+"Planner / Executor"->"Outlook Classic / TrustedBridge"; "Planner / Executor"->"Microsoft Graph"; "Planner / Executor"->"MCP Client"; "Planner / Executor"->"Local Files / Sandbox";
+"MAIA Agent Runtime"->"SQLite + FTS (local authority)" [label="local profile"]; "MAIA Agent Runtime"->"Managed PostgreSQL (enterprise authority)" [label="managed profile"]; "Approval & Policy Gates"->"Audit Log"; "Model Router"->"OS / Enterprise Vault"; "Microsoft Graph"->"OS / Enterprise Vault";
+}

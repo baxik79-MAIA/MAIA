@@ -1,0 +1,60 @@
+schema_version: 1
+profiles:
+  personal_local:
+    core: desktop_local
+    mail: outlook_classic_com_or_graph
+    models: local/byok
+    store: sqlite+os_keyring
+    state_authority: local_sqlite
+    teams_surface: disabled_unless_relay_profile_is_configured
+    teams_transport: managed_channel_adapter_plus_outbound_relay
+    direct_public_inbound_to_workstation: false
+  enterprise_user:
+    core: desktop_or_managed_service
+    mail: graph
+    channels: teams/outlook
+    identity: entra
+    policies: tenant_managed
+    state_authority: managed_postgresql_reference
+    channel_service: public_https_m365_agent_service
+    desktop_role: thin_client_or_local_capability_worker
+    direct_cloud_access_to_desktop_sqlite: false
+  hybrid_enterprise:
+    core: desktop+agent_service
+    sensitive_processing: local_or_tenant
+    external_models: policy_controlled
+    state_authority: managed_service_unless_workspace_is_explicitly_local_authoritative
+    local_worker_connection: outbound_authenticated_relay
+    direct_public_inbound_to_workstation: false
+    split_brain_authority: forbidden
+  developer:
+    core: local
+    connectors: mock/sandbox
+    secrets: dev_keyring
+    audit: verbose_sanitized
+update_policy:
+- signed_artifacts_only
+- schema_migration_preflight
+- backup_before_update
+- rollback_metadata
+platform_strategy:
+  core_contract: OS-neutral domain/orchestrator/policy/connector contracts.
+  reference_desktop_alpha: Windows, because Outlook Classic COM bootstrap exists only there.
+  windows_only_dependency: connectors/outlook-classic and any explicitly Windows-specific desktop integration.
+  non_windows_target: Graph/Teams/MCP/service paths must not depend on COM or Win32; macOS/Linux desktop support
+    is a roadmap/support-matrix decision, not a core-architecture blocker.
+  ci_rule: Core/spec/connector-contract tests should run on at least one non-Windows CI runner before universal
+    MVP.
+teams_topology:
+  production_channel_requirement: Teams/M365 channel service terminates at a publicly reachable HTTPS agent endpoint.
+  developer_local_test: Dev Tunnel or Agents Playground may expose localhost for development only.
+  local_or_hybrid_reference_pattern:
+    cloud_component: MAIA Channel Adapter / M365 agent endpoint
+    local_component: MAIA local Core/worker holding the local SQLite authority
+    link: outbound authenticated bidirectional relay
+    reference_implementation: Azure Relay Hybrid Connections (WebSocket/HTTPS over outbound 443) or equivalent tenant-approved
+      relay
+    cloud_component_must_not_open_local_sqlite: true
+    inbound_firewall_port_on_workstation_required: false
+  message_semantics: Channel adapter transports authenticated task/approval envelopes; it does not become a second
+    MAIA brain.

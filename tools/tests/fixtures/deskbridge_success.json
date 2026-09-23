@@ -1,0 +1,18 @@
+{
+  "provenance": "Entirely synthetic receipt/inbox fixture; no real provider, conversation, machine or run identifiers.",
+  "receipt": {
+    "thread_id": "synthetic-desk-thread-abcdef",
+    "sent_at": "2000-01-01T00:00:00+00:00",
+    "subject": "Synthetic test handoff",
+    "repo_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_pending_file": "synthetic/outbox/pending.md",
+    "status": "sent"
+  },
+  "inbox": {
+    "thread_id": "synthetic-desk-thread-abcdef",
+    "received_at": "2000-01-01T00:00:01+00:00",
+    "related_outbox_receipt": "synthetic/outbox/sent.receipt.json",
+    "repo_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source": "architecture_desk"
+  }
+}

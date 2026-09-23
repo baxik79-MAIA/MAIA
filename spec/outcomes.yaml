@@ -1,0 +1,46 @@
+schema_version: 1
+lifecycle:
+  statuses:
+  - candidate
+  - observed
+  - verified
+  - rejected
+  - disputed
+  - superseded
+  transitions:
+    candidate:
+    - observed
+    - rejected
+    - disputed
+    - superseded
+    observed:
+    - verified
+    - rejected
+    - disputed
+    - superseded
+    verified:
+    - disputed
+    - superseded
+    rejected:
+    - superseded
+    disputed:
+    - observed
+    - verified
+    - rejected
+    - superseded
+    superseded: []
+rules:
+  candidate_may_result_from_inference: true
+  observed_requires_source_or_evidence: true
+  verified_requires_verification_method: true
+  verified_requires_sufficient_evidence: true
+  model_confidence_alone_promotes_to_verified: false
+  verified_retains_provenance: true
+  rejected_means_available_evidence_disproves_proposed_outcome: true
+  disputed_means_authoritative_or_material_evidence_conflicts: true
+  superseded_preserves_history_and_points_to_newer_outcome: true
+  business_outcome_is_not_run_outcome_certainty: true
+  outcome_may_exist_without_run: true
+measurement:
+  verified_status_is_successful_outcome_denominator: true
+  evidence_refs_are_source_linked: true

@@ -1,0 +1,54 @@
+[package]
+name = "maia-roundtable-invoke"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+# M0.15.7: the first explicit, human-initiated invocation path for the Round
+# Table. Design: reports/roundtable/M0_15_7_INVOCATION_PATH_PROPOSAL.md.
+#
+# This is a Round Table implementation crate, NOT a shipped application. It lives
+# under ops/ rather than apps/ on purpose: infra/claude-code/tests/deployment_lock.rs
+# asserts that no apps/* manifest mentions the provider, and an invoker must be
+# able to construct one. It is deliberately absent from the `APPS` set in
+# roundtable/tests/core_independence.rs, so a DEPLOYMENT_LOCKED build never
+# contains it, and no Core crate, shipped app, viewer, composition or
+# observability crate may depend on it.
+#
+# The provider dependency is optional and the binary requires the
+# `development-evolution` feature, so a default (locked) workspace build does not
+# produce the binary at all, rather than producing one that refuses at runtime
+# (v5.1 §6.2, ADR-0047).
+
+[features]
+default = []
+development-evolution = [
+    "dep:maia-claude-code",
+    "maia-claude-code/development-evolution",
+    "dep:maia-local-model",
+    "dep:maia-local-model-roundtable",
+]
+
+[dependencies]
+maia-domain = { path = "../../core/domain" }
+maia-assurance-router = { path = "../../core/assurance-router" }
+maia-roundtable = { path = "../../roundtable" }
+maia-roundtable-composition = { path = "../../composition/roundtable-composition" }
+maia-roundtable-observability = { path = "../../composition/roundtable-observability" }
+maia-roundtable-store = { path = "../../infra/roundtable-store" }
+maia-claude-code = { path = "../../infra/claude-code", optional = true }
+# The local participant is realized only in a development-evolution build too, so a
+# default (locked) build links no provider adapter of either kind.
+maia-local-model = { path = "../../infra/local-model", optional = true }
+maia-local-model-roundtable = { path = "../../infra/local-model-roundtable", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+name = "maia_roundtable_invoke"
+path = "src/lib.rs"
+
+[[bin]]
+name = "maia-roundtable-invoke"
+path = "src/main.rs"
+required-features = ["development-evolution"]

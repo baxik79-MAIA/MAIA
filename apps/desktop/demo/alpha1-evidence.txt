@@ -1,0 +1,8 @@
+MAIA Alpha 1 demonstration evidence
+
+MAIA stores an immutable snapshot of explicitly selected local text evidence.
+The local briefing path may only describe claims, inferences, and unknowns
+grounded in that evidence. It has no execution authority.
+
+The selected local provider is the MAIA-owned loopback runtime using
+qwen3:4b-instruct-2507-q4_K_M. There is no cloud fallback in this flow.

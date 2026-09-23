@@ -1,0 +1,11 @@
+[package]
+name = "maia-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+maia-domain = { path = "../domain" }
+maia-orchestrator = { path = "../orchestrator" }
+maia-policy = { path = "../policy" }
+maia-store = { path = "../store" }

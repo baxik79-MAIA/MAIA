@@ -1,0 +1,16 @@
+[package]
+name = "maia-local-briefing-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+maia-briefing = { path = "../../core/briefing" }
+maia-domain = { path = "../../core/domain" }
+maia-local-model = { path = "../../infra/local-model" }
+maia-sqlite = { path = "../../infra/sqlite" }
+maia-store = { path = "../../core/store" }
+serde_json = "1"
+
+[dev-dependencies]
+sha2 = "0.10"

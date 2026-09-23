@@ -1,0 +1,18 @@
+[package]
+name = "maia-local-intelligence-diagnostics"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[[bin]]
+name = "local-intelligence-inspect"
+path = "src/bin/inspect.rs"
+
+[dependencies]
+maia-local-intelligence-health = { path = "../local-intelligence-health" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+maia-briefing = { path = "../../core/briefing" }
+maia-local-model = { path = "../local-model" }

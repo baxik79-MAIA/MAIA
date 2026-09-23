@@ -1,0 +1,24 @@
+[package]
+name = "maia-local-intelligence-hypothesis-ledger"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[[bin]]
+name = "local-intelligence-ledger"
+path = "src/bin/ledger_cli.rs"
+
+[dependencies]
+maia-local-intelligence-diagnostics = { path = "../local-intelligence-diagnostics" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+# Used only by the `local-intelligence-ledger` CLI binary (to build a fresh
+# DiagnosticSnapshot before recording it) -- never by lib.rs, which depends
+# only on the diagnostics crate's already-built DiagnosticSnapshot type.
+# The M0.15.12 directive forbids `health -> ledger`, not this direction; the
+# same "CLI needs both diagnostics and health" shape was already established
+# by M0.15.11's own local-intelligence-inspect binary.
+maia-local-intelligence-health = { path = "../local-intelligence-health" }
+
+[dev-dependencies]
+maia-local-model = { path = "../local-model" }

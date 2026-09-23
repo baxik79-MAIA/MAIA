@@ -1,0 +1,18 @@
+schema_version: 1
+layers:
+  ephemeral: Current task scratch/context only.
+  working: Recent project/thread context with expiration.
+  durable: User-approved or strongly sourced stable work facts.
+  relationship: Professional interaction preferences and context; no sensitive profiling unless explicitly allowed.
+claim_lifecycle:
+- candidate
+- accepted
+- superseded
+- expired
+- rejected
+rules:
+- source_required_for_operational_fact
+- user_correction_supersedes_inference
+- sensitive_personal_attributes_not_inferred
+- memory_can_be_disabled_per_workspace
+- deletion_propagates_to_indexes_subject_to_audit_retention_policy

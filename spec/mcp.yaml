@@ -1,0 +1,49 @@
+schema_version: 1
+target_spec: '2026-07-28'
+roles:
+  client: Connect MAIA to approved external MCP servers/tools.
+  server: Expose scoped MAIA capabilities to other approved agents/clients.
+server_scopes:
+- mail.read_summary
+- mail.draft
+- calendar.read
+- workgraph.read
+- commitments.read
+- tasks.create
+- artifacts.read
+forbidden_default_server_scopes:
+- mail.send
+- mail.delete
+- credentials.manage
+- policy.modify
+rules:
+- tool_catalog_is_cacheable_but_revalidated
+- authorization_is_scope_based
+- tool_output_is_untrusted_until_validated
+- external_mcp_cannot_bypass_approval_gate
+- server_requests_are_audited
+- tool_definition_fingerprint_is_bound_to_review_and_approval
+- tool_definition_change_invalidates_prior_trust_decision
+tool_definition_pinning:
+  canonical_fingerprint_fields:
+  - server_identity
+  - tool_name
+  - title
+  - description
+  - inputSchema
+  - outputSchema
+  - annotations
+  fingerprint_algorithm: sha256(utf8(jcs_rfc8785(canonical_fields_object)))
+  on_catalog_change: invalidate prior review/approval/allowlist decision for the changed tool definition and rerun
+    policy evaluation
+  execution_check: Tool fingerprint at execution MUST equal the fingerprint bound to the approved/reviewed action.
+  stale_decision_error: ExternalConflict
+  canonicalization_standard: RFC-8785-JCS
+  canonical_object_construction:
+    all_listed_fields_are_present: true
+    missing_optional_fields: encode_as_json_null
+    unicode_normalization: none_preserve_code_points_as_required_by_JCS
+    number_domain: I-JSON / IEEE-754 compatible JSON numbers only
+    utf8_encoding_after_jcs: true
+  cross_runtime_requirement: Python/Rust/TypeScript implementations MUST pass the same RFC-8785 golden vectors.
+action_binding_ref: spec/action_binding.yaml#mcp

@@ -1,0 +1,253 @@
+schema_version: 1
+releases:
+  alpha_local_legacy:
+  - id: A001
+    requirement: Application runs on a supported Windows machine without external commercial AI API keys.
+  - id: A002
+    requirement: Outlook Classic connector can read/search selected mailbox scope and create drafts through TrustedBridge
+      without exposing credentials to MAIA core.
+  - id: A003
+    requirement: Local model endpoint can analyze messages and generate drafts; all sends require approval.
+  - id: A004
+    requirement: Task/Plan/Action/Run provenance survives restart and is auditable.
+  - id: A005
+    requirement: Commitment extraction produces source-linked candidate commitments and never silently marks them
+      confirmed.
+  - id: A006
+    requirement: No plaintext secret exists in SQLite, logs, exports, bundles or fixtures.
+  - id: A007
+    requirement: Spec validator and generated-contract drift check pass in CI.
+  - id: A008
+    requirement: PL and EN UI strings are externalized.
+  - id: A009
+    requirement: All spec/*.yaml parse successfully and Spec Guard rejects risk-enum mismatch, missing dynamic-risk
+      resolver references and incomplete FSM transitions.
+  - id: A010
+    requirement: Windows/COM dependencies are confined to the Outlook Classic adapter/surface boundary; MAIA Core
+      has no direct Outlook COM/Win32 business dependency.
+  - id: A011
+    requirement: 'Task pause is quiescent: no new Run starts after pause request, non-cancellable in-flight side
+      effects drain/reconcile, and Task enters paused only when no Run remains in flight. This includes superseded
+      revisions and created-to-starting transitions.'
+  - id: A012
+    requirement: Outlook Classic sidecar uses a dedicated STA COM execution context, handles rejected/busy COM calls
+      with bounded retry/message-filter behavior, and reports ConnectorHealth=degraded rather than hanging.
+  mvp_universal:
+  - id: M001
+    requirement: All Alpha criteria pass.
+  - id: M002
+    requirement: Connector contract supports Outlook Classic and Microsoft Graph without core business logic changes.
+  - id: M003
+    requirement: Teams agent surface can receive a request, show an approval card and return task result using the
+      same task identity as desktop.
+  - id: M004
+    requirement: Microsoft Graph mail sync uses delta/change notification strategy with recovery path.
+  - id: M005
+    requirement: User can add, validate, rotate and delete multiple model/API credential profiles without code changes.
+  - id: M006
+    requirement: WorkGraph links at least people, projects, threads, meetings, decisions and commitments with source
+      provenance.
+  - id: M007
+    requirement: External send, destructive and privileged actions cannot auto-execute under default policy.
+  - id: M008
+    requirement: MCP client can connect to an approved server and MCP server can expose read-only scoped MAIA tools.
+  - id: M009
+    requirement: 'Approval decisions are compare-and-swap/versioned: first terminal decision wins and stale or concurrent
+      decisions return ExternalConflict.'
+  - id: M010
+    requirement: MCP tool review/approval is pinned to a canonical tool-definition fingerprint; material definition
+      change invalidates the previous trust decision.
+  - id: M011
+    requirement: Core/spec/connector-contract test suites pass on a non-Windows CI runner; platform-specific connector
+      tests remain scoped to their platform.
+  - id: M012
+    requirement: Teams production topology uses a managed public HTTPS channel endpoint; a local-authoritative Core
+      is reached only through an authenticated outbound relay and the cloud adapter never opens local SQLite directly.
+  - id: M013
+    requirement: MCP tool fingerprints use RFC 8785 JCS + SHA-256 and pass the same canonicalization golden vector
+      across every supported runtime implementation.
+  - id: M014
+    requirement: Payload mutation invalidates every old approval binding for the superseding payload/version, revokes
+      pending/approved approvals, preserves not_required/rejected/expired/revoked historical states, and recomputes
+      the action hash for a new action/approval version that is risk-resolved and re-gated before execution; not_required
+      remains a valid result under the canonical gate mapping.
+  - id: M015
+    requirement: Approval surfaces render untrusted content through a typed/sanitized presentation policy that blocks
+      remote/data-URI resource exfiltration and untrusted Adaptive Card media/navigation elements.
+  - id: M016
+    requirement: Material side effects derived from mutable external objects perform a connector source-version
+      freshness check; version mismatch invalidates stale plan/approval.
+  - id: M017
+    requirement: Ambiguous non-idempotent side-effect outcomes enter reconciliation and are never blindly retried.
+  - id: M018
+    requirement: ActionBindingV1 has deterministic RFC8785 JCS/SHA-256 with exact u64 decimal strings, complete
+      canonical input, connector identity/scope and visible MCP fingerprint binding.
+  - id: M019
+    requirement: Immutable Action/Plan revisions and Run authorization record versions remain reconstructible; results
+      affect only the exact executed revision.
+  - id: M020
+    requirement: Current policy/assurance, expiry and versioned CAS constrain execution; not_required is an audit
+      binding without a human decision; deny never authorizes.
+  - id: M021
+    requirement: Every retry creates a new RunId in the exact Action revision attempt scope; unresolved effects
+      block equivalent execution across IDs and revisions; authoritative non-execution evidence is required.
+  - id: M022
+    requirement: Freshness evidence is per Run; unverifiable material freshness fails closed; pause includes superseded
+      in-flight revisions and prevents created Runs from starting.
+  - id: M023
+    requirement: Trusted recipient boundaries classify unknown as external, reject empty mail recipients and preserve
+      explicit destructive/privileged operation floors.
+  m0_2_1_contract_closure:
+  - id: P001
+    requirement: AgentTask and Run carry mutable record CAS versions distinct from immutable plan/action revisions and attempts.
+  - id: P002
+    requirement: Authoritative persistence identities, parent integrity and no-runtime-hard-delete history rules are canonical.
+  - id: P003
+    requirement: T1-T5 serialized atomic transaction boundaries are canonical and approval creation is not coupled to later Run creation.
+  - id: P004
+    requirement: Workspace-scoped append-only AuditRecord uses monotonic sequence, RFC8785-JCS SHA-256 hash chaining and privacy-minimized facts.
+  - id: P005
+    requirement: Local authority, migration ledger, backup/recovery, injected clock and fail-closed persistence error semantics are canonical without implementing SQLite.
+  m0_7_execution_intelligence_contract:
+  - id: E001
+    requirement: Signal, Context, Commitment, Decision, Risk, Plan, Action, Run and Outcome remain distinct canonical concepts.
+  - id: E002
+    requirement: Business Outcome is separate from Run OutcomeCertainty and can be candidate, observed, verified, rejected, disputed or superseded.
+  - id: E003
+    requirement: Verified Outcome retains provenance, evidence and an explicit verification method; model confidence alone never verifies an Outcome.
+  - id: E004
+    requirement: ReasoningAssuranceLevel A0-A4 is independent from RiskClass and never grants execution permission.
+  - id: E005
+    requirement: A3 Round Table records independent reasoning, disagreement, evidence comparison, adjudication and measured usage without bypassing ApprovalGate.
+  - id: E006
+    requirement: A4 human reasoning confirmation does not replace any independently required ApprovalGate authorization.
+  - id: E007
+    requirement: TTFV and TTFA are instrumentable from authorized usable context without treating generic model output, diagnostics or no-op plumbing as qualifying value or action.
+  - id: E008
+    requirement: Product advantage claims have a named benchmark or instrumented measurement for successful Outcome rate, human effort, cost per successful Outcome, TTFV, TTFA and repeatability.
+  - id: E009
+    requirement: Unknown cost and unknown human effort remain unknown and are never silently represented as zero.
+  - id: E010
+    requirement: Personal and local Workspaces may exist without Tenant; commercial organizational mode requires the Tenant seam and fails closed when it is absent.
+  - id: E011
+    requirement: G2 alerts FORM COMPANY NOW before paid production, recurring B2B commercial contract or external-customer production-data processing; G3 and G4 remain outside Task and Action FSMs.
+  - id: E012
+    requirement: Microsoft 365 Execution Control remains a replaceable validation hypothesis and does not redefine generic Core execution contracts.
+  m0_8_round_table_vertical_slice:
+  - id: R001
+    requirement: Round Table receives a DecisionRequest, collects response-isolated ParticipantResponses, records disagreement and evidence, adjudicates and returns a reasoning-only RoundTableDecision.
+  - id: R002
+    requirement: A3 and A4 preserve independent ApprovalGate and Action authorization requirements; RoundTableDecision never authorizes an Action.
+  - id: R003
+    requirement: Provider-neutral Participant and ModelProvider contracts permit a configured Anthropic adapter without making Claude, an API key or an organization identifier part of Core contracts.
+  - id: R004
+    requirement: Anthropic Messages adapter uses local credential boundary, bounded timeout, safe transient-only retry, request-id and returned usage capture, with no hidden provider fallback.
+  - id: R005
+    requirement: Fake participants exercise the vertical slice without network or credentials; the live Anthropic smoke test is explicitly opt-in and skipped by default.
+  m0_9_assurance_routing:
+  - id: Q001
+    requirement: A provider-neutral router selects A0-A4 from explicit assurance signals and policy floor, records reason codes, and never grants execution or ApprovalGate authority.
+  - id: Q002
+    requirement: A0 is deterministic, A1 uses one enabled participant, A2 requires a meaningfully independent verifier, A3 uses the response-isolated Round Table, and A4 additionally requires recorded human reasoning acceptance.
+  - id: Q003
+    requirement: The registry records participant identity, provider, model reference, role capability, enabled state, assurance levels, cost-metadata capability and availability health without hardcoding providers or models.
+  - id: Q004
+    requirement: Estimated cost is checked before reasoning, measured cost is retained afterward when returned, unknown cost is never zero, and a session ceiling fails explicitly without hidden fallback.
+  - id: Q005
+    requirement: Provider, quota, timeout, verifier, adjudication and required-assurance failures return explicit InsufficientAssurance with a reason code; the router never silently downgrades.
+  - id: Q006
+    requirement: The audit record contains request, identities and model references, conclusions, evidence, disagreement/adjudication, assurance, usage/cost, provider request IDs when returned, outcome/confidence and A4 human acceptance.
+  m0_12_claude_code_subscription_provider:
+  - id: C001
+    requirement: A ClaudeCodeProvider discovers the locally installed Claude Code executable, records its version, and fails closed with an explicit error when the executable is absent or not authenticated.
+  - id: C002
+    requirement: The provider invokes Claude Code non-interactively in print mode with an explicit working directory and argument-safe process invocation; no shell command is constructed from packet content.
+  - id: C003
+    requirement: The child environment is unconditionally scrubbed of ANTHROPIC_API_KEY and equivalent credential or endpoint overrides, so the invocation stays on subscription-backed authentication and never depends on an API key.
+  - id: C004
+    requirement: Tool authority is restricted by an explicit deny list; bypassPermissions is never used and an empty allowlist is never treated as deny-all.
+  - id: C005
+    requirement: A versioned ConsultationPacket produces a schema-validated ConsultationResult whose consultation_id matches the request; timeout, cancellation, non-zero exit, malformed JSON, empty response and schema violation all fail closed without fabricating a successful response.
+  - id: C006
+    requirement: Every invocation persists a local audit record containing the raw response, execution metadata and correlation ID; audit write failure fails the invocation and no scrubbed credential value is ever written.
+  - id: C007
+    requirement: A recursion guard environment marker prevents a Claude Code invocation from spawning a nested Claude Code invocation.
+  - id: C008
+    requirement: The provider is absent by construction from a DEPLOYMENT_LOCKED build; subprocess code is not compiled without the development-evolution feature and MAIA Core never depends on the provider.
+  m0_13_round_table_live_orchestration:
+  - id: D001
+    requirement: A failing participant degrades only its own contribution and never aborts collection; surviving participants still produce outcomes, though the session may still terminate as InsufficientAssurance when quorum is no longer satisfied.
+  - id: D002
+    requirement: Falling below the A3 minimum of two valid independent first-round responses returns InsufficientAssurance with an explicit reason code; no silent downgrade and no single-participant Round Table.
+  - id: D003
+    requirement: Leader selection is deterministic, registry-driven, recorded, and hardcodes no provider or model.
+  - id: D004
+    requirement: Two interchangeable providers run the same session through the same provider-neutral port with no MAIA Core change.
+  - id: D005
+    requirement: Every contribution carries provenance including the model reference actually used.
+  - id: D006
+    requirement: First-round response isolation is preserved and provable under partial participant failure.
+  - id: D007
+    requirement: Round Table session history persists locally and survives process restart.
+  - id: D008
+    requirement: A reasoning-only participant never obtains execution authority and RoundTableDecision.execution_authority remains false on every path.
+  - id: D009
+    requirement: MAIA Core and shipped applications build and operate with the Round Table implementation absent from their dependency graph.
+  - id: D010
+    requirement: No participant, provider or model identifier is hardcoded in core/*.
+  - id: D011
+    requirement: Failed participant attempts remain visible in session provenance with classified failure metadata.
+  - id: D012
+    requirement: Adjudicator or leader participation never substitutes for a missing first-round quorum.
+  - id: D013
+    requirement: Session persistence and restart preserve both successful and failed contribution provenance.
+  - id: D014
+    requirement: Provider resolution failure is isolated and explicitly classified and never silently resolves to another provider.
+  beta_enterprise:
+  - id: B001
+    requirement: Tenant-managed policies can override user policies toward stricter behavior.
+  - id: B002
+    requirement: Teams proactive briefing and scheduled jobs work with the same approval and privacy gates.
+  - id: B003
+    requirement: Relationship intelligence and commitment tracking pass source/provenance golden tests.
+  - id: B004
+    requirement: Connector and model fallbacks are visible before material side effects and persisted afterward.
+  - id: B005
+    requirement: Threat-model regression, dependency audit, secret scan and prompt-injection tests pass.
+  - id: B006
+    requirement: Credential-compromise runbook is tested for at least one API-key profile and one OAuth/tenant connector
+      profile.
+  - id: B007
+    requirement: Third-party personal-data governance controls support subject-linked locate/export/rectify/restrict/erase-or-anonymize
+      workflows according to configured retention/legal policy.
+  - id: B008
+    requirement: WorkGraph inferred edges are visibly marked as suggestions, source-linked, and cannot authorize
+      side effects until confirmed or explicitly promoted by policy.
+  - id: B009
+    requirement: Third-party erasure workflow supports policy-driven deletion or pseudonymized random tombstones
+      without deterministic hashes of PII and removes/suppresses derived indexes and memory.
+  - id: B010
+    requirement: Approval-fatigue controls use explicit scoped/expiring grants or approved templates; RelationshipProfile
+      familiarity alone never grants execution authority.
+  v1_0:
+  - id: V001
+    requirement: All Beta criteria pass.
+  - id: V002
+    requirement: 'Classic-to-new-Outlook migration path is tested: disabling COM connector does not orphan MAIA
+      history or WorkGraph.'
+  - id: V003
+    requirement: Accessibility audit meets WCAG AA for applicable desktop/web controls.
+  - id: V004
+    requirement: No critical/high known vulnerability without documented risk acceptance.
+  - id: V005
+    requirement: Signed update verification and rollback/recovery runbook pass.
+definition_of_done_global:
+- tests_pass
+- generated_contracts_current
+- no_spec_drift
+- docs_updated
+- migration_added_if_needed
+- security_impact_reviewed
+- i18n_keys_added
+- no_secret_leak
+- acceptance_vector_updated

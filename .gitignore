@@ -1,0 +1,82 @@
+ď»ż# Build artifacts
+target/
+dist/
+build/
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/*.log
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local runtime/state
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+
+# Secrets / credentials
+*.pem
+*.pfx
+*.p12
+*.key
+credentials/
+secrets/
+
+# Logs / temp
+*.log
+tmp/
+temp/
+
+# MAIA local artifacts
+.local/
+.cache/
+
+# Continuation driver runtime state (per-host, not shared)
+reports/roundtable/continuation/state.json
+reports/roundtable/continuation/HOLD
+reports/roundtable/continuation/desk_outbox/
+
+# Publication hygiene: machine-local operational evidence (not source/fixtures).
+# These rules do NOT remove already-tracked files or sanitize Git history.
+/reports/roundtable/ledger/
+/reports/roundtable/outbox/
+/reports/roundtable/inbox/
+/reports/roundtable/live_validation/machine_evidence/
+/reports/roundtable/continuation/continuation_log.jsonl
+/reports/roundtable/correlation/
+/reports/roundtable/runtime/
+/reports/desk_inbox/
+/reports/desk_outbox/
+/.claude/scheduled_tasks.lock
+/.claude/settings.local.json
+/.codex/auth.json
+/auth.json
+/config/auth.json
+/logs/
+/runtime/
+/state/
+/models/cache/
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite-wal
+*.sqlite-shm
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Public source repository: runtime evidence is never source.
+/reports/
+/docs/development/CURRENT_ARCHITECTURE_HANDOFF.md
+/docs/project/reference/source_provenance.json

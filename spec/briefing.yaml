@@ -1,0 +1,40 @@
+schema_version: 1
+contract:
+  scope: M0.10_local_evidence_briefing
+  locality: local_only_loopback_provider
+  external_egress: forbidden
+  execution_authority: false
+  approval_gate_substitution: forbidden
+  automatic_promotion: forbidden
+  packet:
+    required_fields: [consultation_id, workspace_id, objective, evidence_references, evidence_hashes, bounded_excerpts, instructions, privacy_classification, response_contract, size_limits]
+    evidence_source: MAIA_owned_immutable_artifacts_only
+    context_selection: explicit_or_deterministic_bounded
+    whole_workspace_default: forbidden
+    provider_history: non_canonical
+    identity:
+      version: briefing_packet_v1
+      canonical_hash_binds: [workspace_id, objective, evidence_references, evidence_hashes, citation_namespace, instructions, response_contract, privacy_classification, assurance_level, model_routing_constraints, instruction_template_version]
+      excludes: [transport_timestamp, latency, provider_session_id]
+  result:
+    durable_entity: BriefingResult
+    classification: [supported_by_evidence, inference, unknown_not_supported]
+    required_provenance: [consultation_id, workspace_id, packet_hash, evidence_ids, evidence_hashes, requested_provider, requested_model, actual_provider, actual_model, locality, response_hash, timestamp, outcome, citation_validation, latency, usage, no_fallback]
+    citations_must_be_packet_scoped: true
+    unknown_or_out_of_packet_citation: reject
+    execution_authority: false
+    raw_provider_response: untrusted_non_accepted
+    accepted_result: validated_before_persistence
+    validation: [output_shape, citation_identity, citation_scope, evidence_membership, evidence_hash, result_limits, execution_authority_false, claim_classification]
+    persistence: atomic_packet_result_provenance_citations_audit
+    immutability: new_invocation_creates_new_result
+    persona: presentation_only_not_semantic
+    assurance: recorded_advisory_only
+  limits:
+    maximum_evidence_count: 8
+    maximum_packet_bytes: 262144
+    maximum_output_tokens: 1024
+    timeout_seconds: 60
+    retry_count: 0
+    retry_semantics: same_semantic_packet_same_local_provider_policy_separate_attempt_provenance
+  failures: [local_provider_unavailable, model_unavailable, packet_too_large, timeout, malformed_response, invalid_citation, unsupported_response, provider_error, result_validation_failed]

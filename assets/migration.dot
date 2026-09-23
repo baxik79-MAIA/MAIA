@@ -1,0 +1,6 @@
+digraph G {rankdir=LR; graph [bgcolor="white",pad="0.2"]; node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=10, fillcolor="#F5F7FA", color="#596273"]; edge [color="#77808F"];
+"Today: Outlook Classic" -> "OutlookClassicConnector\n(COM / TrustedBridge)" -> "MAIA Core";
+"Future: New Outlook / M365" -> "GraphConnector\n+ Outlook Web Add-in" -> "MAIA Core";
+"Teams" -> "Teams/M365 Agent Surface" -> "MAIA Core";
+"MAIA Core" -> "Same WorkGraph / Memory / Audit" [dir=both];
+}

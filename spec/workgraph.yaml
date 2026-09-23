@@ -1,0 +1,65 @@
+schema_version: 1
+node_types:
+- person
+- organization
+- project
+- thread
+- message
+- meeting
+- commitment
+- decision
+- work_item
+- artifact
+- deadline
+- dependency
+- risk
+- outcome
+edge_types:
+- works_for
+- participates_in
+- belongs_to_project
+- replies_to
+- mentions
+- depends_on
+- promised_to
+- decided_in
+- follow_up_to
+- supersedes
+- attached_to
+- scheduled_for
+rules:
+- edges_keep_source_and_confidence
+- inference_edges_are_distinct_from_explicit_edges
+- project_linking_can_be_corrected_by_user
+- deleted_external_content_does_not_silently_delete_audit_history
+use_cases:
+- meeting_briefing
+- thread_context
+- commitment_tracking
+- relationship_brief
+- project_status
+- contradiction_detection
+- deadline_drift_detection
+- dependency_block_detection
+- risk_state_change
+- outcome_tracking
+- execution_history
+- what_changed_since_last_review
+edge_provenance:
+  required_fields:
+  - source_ref
+  - confidence
+  - is_inferred
+  - status
+  inferred_default:
+    is_inferred: true
+    status: candidate
+    ui_badge: suggested_by_ai
+    may_authorize_side_effect: false
+  promotion: human confirmation or explicit policy-controlled deterministic evidence may promote; promotion is audited
+  correction: user correction supersedes inference and triggers recomputation of derived context
+execution_intelligence_rules:
+- inferred_deadline_dependency_or_risk_is_candidate_until_confirmed_or_policy_promoted
+- inferred_edge_never_authorizes_a_side_effect
+- outcome_evidence_edges_keep_source_ref
+- outcome_is_distinct_from_technical_run_completion

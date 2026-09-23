@@ -1,0 +1,4 @@
+
+# Imported evidence preserves source bytes, including original line endings.
+docs/project/directives/*.md -text -diff
+docs/project/milestone-reports/*.md -text -diff

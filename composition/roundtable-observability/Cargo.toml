@@ -1,0 +1,17 @@
+[package]
+name = "maia-roundtable-observability"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+# Depends on the Round Table READ CONTRACT only.
+#
+# Deliberately NOT on maia-roundtable-composition: that crate realizes an
+# assurance plan by invoking providers, and a viewer must not be able to reach
+# invocation through its own dependency graph. Deliberately NOT on
+# maia-roundtable-store either: which storage backend supplied a SessionView is
+# none of a viewer's business.
+
+[dependencies]
+maia-roundtable = { path = "../../roundtable" }
+maia-domain = { path = "../../core/domain" }

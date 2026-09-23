@@ -1,0 +1,26 @@
+schema_version: 1
+model_router:
+  providers: dynamic_registry
+  supported_profile_types:
+  - local_openai_compatible
+  - openai
+  - anthropic
+  - azure_openai
+  - google
+  - custom_openai_compatible
+  - mcp_sampling_if_policy_allows
+  selection_order:
+  - hard_privacy_rules
+  - required_capabilities
+  - data_residency
+  - credential_health
+  - user_preference
+  - quality_fit
+  - latency
+  - cost
+  fallback: explicit_and_auditable
+credential_policy:
+- keys_rotate_without_code_changes
+- multiple_profiles_per_provider
+- secrets_never_return_to_frontend_after_save
+- provider_model_catalog_is_runtime_data_not_business_logic

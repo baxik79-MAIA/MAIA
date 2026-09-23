@@ -1,0 +1,6 @@
+JCS RFC8785 SELF-TEST OK: 1 vector(s)
+ACTION BINDING SELF-TEST OK: 60 checks
+SPEC GUARD OK: 35 YAML files parsed and contract checks passed.
+GENERATED DOC CHECK OK: 10 fragments
+GENERATED RUST CHECK OK: 1 contract
+MAIA SPEC GUARD: PASS

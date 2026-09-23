@@ -1,0 +1,20 @@
+[package]
+name = "maia-sqlite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+fs2 = "0.4"
+maia-domain = { path = "../../core/domain" }
+maia-store = { path = "../../core/store" }
+maia-briefing = { path = "../../core/briefing" }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+sha2 = "0.10"
+serde_json = "1"
+
+[dev-dependencies]
+maia-executor = { path = "../../core/executor", features = ["test-support"] }
+maia-runtime = { path = "../../core/runtime" }
+maia-policy = { path = "../../core/policy" }
+maia-briefing = { path = "../../core/briefing" }

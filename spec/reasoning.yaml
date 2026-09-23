@@ -1,0 +1,58 @@
+schema_version: 1
+assurance_levels:
+  A0:
+    symbol: deterministic
+    description: Deterministic or rule-based reasoning; no LLM reasoning is required where possible.
+  A1:
+    symbol: single_model
+    description: One appropriate policy-approved model or reasoning path.
+  A2:
+    symbol: verified_reasoning
+    description: Primary reasoning plus a meaningfully independent verification or evidence check; self-repetition is insufficient.
+  A3:
+    symbol: round_table
+    description: Selective multi-path or multi-model reasoning with disagreement capture, evidence comparison, adjudication and measured usage.
+  A4:
+    symbol: human_decision_required
+    description: A3 plus mandatory human confirmation of the high-impact reasoning conclusion; it is not side-effect authorization.
+selection_factors:
+- impact
+- ambiguity
+- uncertainty
+- conflicting_evidence
+- novelty
+- reversibility
+- policy
+hard_rules:
+- reasoning_assurance_is_independent_from_risk_class
+- reasoning_assurance_is_independent_from_approval_assurance
+- assurance_level_never_grants_execution_permission
+- model_consensus_never_bypasses_approval_gate
+- round_table_is_not_default
+- unknown_or_conflicting_evidence_can_raise_assurance
+- policy_can_raise_but_not_silently_lower_required_assurance
+- insufficient_assurance_is_explicit_and_never_silently_downgrades
+- reasoning_budget_is_checked_before_invocation_and_unknown_cost_is_not_zero
+round_table:
+  associated_levels:
+  - A3
+  - A4
+  required_properties:
+  - independent_reasoning_contributions
+  - disagreement_record
+  - evidence_comparison
+  - adjudication_result
+  - model_or_reasoning_path_provenance
+  - usage_and_cost_recording
+  forbidden_shortcuts:
+  - same_path_repetition_presented_as_independent_verification
+  - majority_vote_as_only_truth_rule
+  - direct_execution_privilege
+  - approval_gate_bypass
+  M0_8_vertical_slice_ref: spec/round_table.yaml
+  M0_9_orchestration_ref: spec/assurance_routing.yaml
+a4_human_confirmation:
+  applies_to: reasoning_conclusion_acceptance
+  substitutes_for_approval_gate: false
+  read_only_analysis_may_be_presented: true
+  high_impact_conclusion_before_confirmation: unconfirmed

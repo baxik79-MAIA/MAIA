@@ -1,0 +1,11 @@
+[package]
+name = "maia-local-intelligence-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+ctrlc = "3"
+maia-local-intelligence-health = { path = "../../infra/local-intelligence-health" }
+maia-local-intelligence-hypothesis-ledger = { path = "../../infra/local-intelligence-hypothesis-ledger" }
+maia-local-intelligence-recorder = { path = "../../infra/local-intelligence-recorder" }

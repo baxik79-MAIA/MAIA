@@ -1,0 +1,23 @@
+[package]
+name = "maia-roundtable-store"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+# Deliberately a separate crate rather than part of infra/sqlite. Both shipped
+# applications depend on maia-sqlite, so implementing Round Table persistence
+# there would pull maia-roundtable into their dependency graphs and violate the
+# ADR-0046 boundary that roundtable/tests/core_independence.rs enforces.
+
+[dependencies]
+maia-roundtable = { path = "../../roundtable" }
+maia-domain = { path = "../../core/domain" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Dev-only: the observability layer is exercised against real persistence to
+# prove that observing a store mutates nothing. A dev-dependency never ships,
+# so this cannot pull observability into any shipped dependency graph, and the
+# D009 parser excludes dev-dependencies by design.
+[dev-dependencies]
+maia-roundtable-observability = { path = "../../composition/roundtable-observability" }

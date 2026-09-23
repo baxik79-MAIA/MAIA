@@ -1,0 +1,15 @@
+[package]
+name = "maia-executor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[features]
+test-support = []
+
+[dependencies]
+maia-domain = { path = "../domain" }
+maia-orchestrator = { path = "../orchestrator" }
+maia-policy = { path = "../policy" }
+maia-runtime = { path = "../runtime" }
+maia-store = { path = "../store" }

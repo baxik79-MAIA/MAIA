@@ -1,0 +1,24 @@
+[package]
+name = "maia-roundtable-composition"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[features]
+default = []
+# Gates the opt-in live dual-provider integration tests, which need the real
+# subprocess-invoking maia-claude-code build. Mirrors maia-claude-code's own
+# development-evolution feature: a DEPLOYMENT_LOCKED build never turns this
+# on, so the live tests do not exist in that build.
+development-evolution = ["maia-claude-code/development-evolution"]
+
+[dependencies]
+maia-domain = { path = "../../core/domain" }
+maia-assurance-router = { path = "../../core/assurance-router" }
+maia-roundtable = { path = "../../roundtable" }
+
+[dev-dependencies]
+maia-claude-code = { path = "../../infra/claude-code" }
+maia-local-model = { path = "../../infra/local-model" }
+maia-local-model-roundtable = { path = "../../infra/local-model-roundtable" }
+maia-roundtable-store = { path = "../../infra/roundtable-store" }

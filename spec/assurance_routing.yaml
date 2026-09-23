@@ -1,0 +1,54 @@
+schema_version: 1
+contract:
+  scope: M0.9_provider_neutral_assurance_routing_and_orchestration
+  authority:
+    execution_authority: forbidden
+    approval_gate_substitution: forbidden
+    risk_class_substitution: forbidden
+  router:
+    inputs: [impact, ambiguity, uncertainty, evidence_conflict, novelty, reversibility, policy_required_assurance, estimated_reasoning_cost, session_budget_ceiling, explicit_human_escalation]
+    outputs: [required_assurance, selected_assurance, reason_codes, estimated_reasoning_cost, outcome]
+    outcomes: [selected, insufficient_assurance]
+    policy_can_raise_but_not_lower: true
+    hidden_downgrade: forbidden
+  paths:
+    A0: deterministic_reasoning_path
+    A1: one_enabled_participant
+    A2: primary_plus_meaningfully_independent_verifier
+    A3: response_isolated_round_table_with_disagreement_and_adjudication
+    A4: A3_plus_recorded_human_reasoning_acceptance
+  participant_registry:
+    provider_neutral: true
+    required_fields: [id, provider, model_ref, role_capabilities, enabled, assurance_levels, cost_metadata_capability, availability_health]
+    provider_or_model_hardcoding: forbidden
+    registry_is_not_adapter_configuration: true
+  budget:
+    estimate_before_reasoning: required
+    measure_after_reasoning: required_when_returned
+    unknown_cost: unknown_not_zero
+    session_ceiling: enforced_before_reasoning
+    exceeded_or_unestimable_required_budget: insufficient_assurance
+    hidden_fallback: forbidden
+  failures:
+    explicit_reason_codes: [participant_unavailable, quota_exhausted, timeout, verifier_unavailable, adjudication_failed, budget_exceeded, cost_unknown, required_assurance_unachievable]
+    silent_downgrade: forbidden
+    result: insufficient_assurance
+  audit:
+    required_fields: [request, participant_identities, model_refs, conclusions, evidence, disagreement, adjudication, required_assurance, achieved_assurance, usage, cost, provider_request_ids, outcome, confidence, human_a4_acceptance]
+    provider_request_ids_when_returned: required
+    a4_human_acceptance: recorded_before_conclusion_is_accepted
+    # M0.14: additive fields linking an audit record to the Round Table
+    # session it realized, when the plan's path is A3 or A4. participant_
+    # identities above means contributors whose response was used;
+    # attempted_participants is the superset that also includes failed
+    # attempts, disambiguating a field name that was previously silent on
+    # the distinction.
+    round_table_link:
+      required_fields: [round_table_session_id, selected_leader, attempted_participants, contribution_outcomes, quorum_satisfied, failure_reason]
+      session_id_recorded_even_on_failure: true
+      leader_never_substitutes_missing_quorum: true
+      synthesis_result_reuses: adjudication
+live_validation:
+  default: skipped
+  explicit_opt_in_environment: M0_8_LIVE_ANTHROPIC=1
+  provider_adapter_ref: spec/round_table.yaml#anthropic_adapter

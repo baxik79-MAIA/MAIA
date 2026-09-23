@@ -1,0 +1,68 @@
+schema_version: 1
+commands:
+  task.preflight:
+    risk: analyze
+    cancellable: true
+  task.start:
+    risk: analyze
+    cancellable: true
+  task.cancel:
+    risk: write_internal
+    cancellable: false
+  approval.decide:
+    risk: privileged
+    cancellable: false
+  connectors.add:
+    risk: privileged
+    cancellable: false
+  connectors.test:
+    risk: read
+    cancellable: true
+  credentials.add:
+    risk: privileged
+    secret_input: true
+  credentials.rotate:
+    risk: privileged
+    secret_input: true
+  credentials.delete:
+    risk: privileged
+  mail.draft:
+    risk: draft
+    cancellable: true
+  mail.send:
+    cancellable: false
+    risk_resolution:
+      type: dynamic
+      classifier: mail_recipient_boundary
+      output_enum: RiskClass
+      contract_ref: approval.dynamic_risk_classifiers.mail_recipient_boundary
+      implementation_symbol: core.policy.classifiers.mail_recipient_boundary
+      operation_risk_floor: null
+  calendar.create:
+    cancellable: false
+    risk_resolution:
+      type: dynamic
+      classifier: calendar_participant_boundary
+      output_enum: RiskClass
+      contract_ref: approval.dynamic_risk_classifiers.calendar_participant_boundary
+      implementation_symbol: core.policy.classifiers.calendar_participant_boundary
+      operation_risk_floor: null
+  scheduler.create:
+    risk: write_internal
+    cancellable: false
+  mcp.server.toggle:
+    risk: privileged
+    cancellable: false
+  export.bundle:
+    risk: read
+    cancellable: true
+  audit.export:
+    risk: read
+    cancellable: true
+contract:
+  risk_field: Static RiskClass enum value when action semantics are invariant.
+  risk_resolution: Use for actions whose risk depends on normalized payload/recipient boundary. Resolver MUST return
+    a RiskClass before ApprovalGate.
+  validation: Exactly one of risk or risk_resolution is required for each command.
+  implementation_binding: Spec Guard validates symbolic classifier bindings now; once core exists, generated binding/compile
+    tests MUST prove every symbol is implemented. Canonical spec must not depend on pre-existing code.

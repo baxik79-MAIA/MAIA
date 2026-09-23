@@ -1,0 +1,123 @@
+schema_version: 1
+protected_assets:
+- mail_content
+- teams_content
+- calendar
+- attachments
+- credentials
+- relationship_context
+- workgraph
+- audit_records
+- policies
+- connector_tokens
+threats:
+  prompt_injection_mail_or_attachment:
+  - untrusted_content_boundary
+  - instruction_source_labels
+  - no_tool_call_from_untrusted_text_without_planner_validation
+  - approval_rendering_allowlist
+  - remote_resource_suppression
+  wrong_recipient_or_reply_all:
+  - recipient_diff
+  - external_domain_warning
+  - approval_hash
+  secret_exfiltration:
+  - os_keyring
+  - redaction
+  - frontend_non_return
+  - no_secret_in_logs_db_exports
+  connector_overprivilege:
+  - least_scopes
+  - capability_registry
+  - admin_policy
+  - periodic_scope_review
+  silent_model_or_connector_swap:
+  - requested_actual_provenance
+  - no_hidden_fallback
+  webhook_spoofing:
+  - signature_or_token_validation
+  - client_state
+  - replay_window
+  - idempotency
+  ssrf_custom_endpoint:
+  - scheme_allowlist
+  - dns_recheck
+  - link_local_block
+  - https_remote_default
+  malicious_mcp_tool:
+  - allowlist
+  - schema_validation
+  - risk_class_mapping
+  - sandbox
+  - approval_gate
+  - tool_definition_fingerprint
+  - definition_change_invalidates_approval
+  - server_identity_binding
+  supply_chain:
+  - signed_updates
+  - lockfiles
+  - dependency_audit
+  - secret_scan
+  data_retention_mismatch:
+  - workspace_retention_policy
+  - export_delete_runbooks
+  - tenant_policy_override
+  credential_compromise:
+  - immediate_profile_suspend
+  - provider_or_tenant_revoke
+  - forced_rotation
+  - invalidate_dependent_sessions_and_subscriptions
+  - audit_since_last_known_good
+  - blast_radius_review
+  - incident_record
+  concurrent_or_stale_approval:
+  - compare_and_swap_version
+  - action_hash_binding
+  - first_terminal_decision_wins
+  - ExternalConflict_on_stale_decision
+  third_party_personal_data:
+  - data_minimization
+  - purpose_and_retention_policy
+  - subject_linked_provenance
+  - subject_request_workflow
+  - sensitive_inference_block
+  data_exfiltration_via_approval_rendering:
+  - desktop_csp_blocks_remote_images_media_frames
+  - teams_cards_generated_from_typed_fields_not_untrusted_card_json
+  - no_untrusted_Image_Media_BackgroundImage_or_Action_OpenUrl_elements
+  - escape_or_strip_markdown_links_in_untrusted_snippets
+  - data_uri_blocked_in_approval_surfaces
+  - trusted_static_assets_are_app_owned_or_tenant_allowlisted
+  graph_poisoning_by_inference:
+  - inferred_edges_are_explicitly_marked
+  - source_ref_and_confidence_required
+  - inferred_commitments_default_to_candidate
+  - unconfirmed_inference_cannot_authorize_side_effects
+  - ui_badge_suggested_until_confirmed_or_policy_promoted
+invariants:
+- human_authority
+- least_privilege
+- all_side_effects_are_auditable
+- secrets_are_never_plaintext_persistent
+- content_is_data_not_instruction
+- enterprise_policy_can_be_stricter_than_user_policy
+approval_rendering_policy:
+  untrusted_content_rendering: plain_text_or_sanitized_text_only
+  desktop:
+    csp: default-src 'self'; img-src 'self'; media-src 'none'; frame-src 'none'; object-src 'none'
+    block_data_uri: true
+    external_navigation: explicit_user_action_only
+  teams_adaptive_cards:
+    payload_source: typed MAIA card schema only
+    forbid_untrusted_elements:
+    - Image
+    - ImageSet
+    - Media
+    - BackgroundImage
+    - Action.OpenUrl
+    untrusted_markdown_links: escape_or_strip
+    static_images: app_owned_or_tenant_allowlisted_only
+  outlook_surface:
+    same_typed_fields_and_sanitization: true
+    remote_content_from_message_body_not_embedded_in_approval: true
+execution_authorization_ref: spec/approval.yaml#execution_authorization

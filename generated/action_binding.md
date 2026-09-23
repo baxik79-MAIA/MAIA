@@ -1,0 +1,187 @@
+# GENERATED - do not edit
+
+```yaml
+schema_version: 1
+scope: M0.1.1 canonical contract and reference conformance only; no production canonicalizers
+  or resolvers.
+revisions:
+  action_identity: ActionId_is_logical_step
+  revision_identity:
+  - action_id
+  - action_version
+  plan_revision_identity:
+  - plan_id
+  - plan_version
+  immutable_after:
+  - approval_binding
+  - any_Run
+  immutable_fields_source: spec/action_binding.yaml#action_binding.fields
+  mutable_exclusions:
+  - state
+  - result_ref
+  - input_ref
+  input_ref_change_cannot_change_input_bytes: true
+  historical_revisions_reconstructible: true
+  material_edit: next_version_exactly_once
+  logical_identity_not_preservable: new_ActionId
+  overflow: fail_closed_never_wrap_saturate_or_reuse
+canonicalizer:
+  reference_type: CanonicalizerRef
+  registry_key:
+  - action_type
+  - id
+  - version
+  material_identity_change: true
+  material_failure: no_binding_no_execution
+  failure_cases:
+  - missing_registration
+  - canonicalization_failure
+  core_may_guess_normalization: false
+  production_implementations: deferred
+canonical_input:
+  name: CanonicalActionInput
+  algorithm: sha256(utf8(jcs_rfc8785(canonical_action_input)))
+  schema: action_type_specific_registered_contract
+  number_domain: I-JSON_IEEE754_exact_semantics_required
+  unsafe_integer_input: reject_unless_action_schema_defines_lossless_string_projection
+  completeness_when_applicable:
+  - resolved_target_account_tenant_resource_identity
+  - effective_recipients_or_participants
+  - subject_body_content_or_content_addressed_references
+  - attachment_identity_and_content_hashes
+  - material_operation_options
+  - mcp_tool_definition_fingerprint
+  - every_value_changing_externally_observable_effect
+  input_ref_is_hash: false
+  execution_recomputes_input_hash: true
+  mutable_locator_mismatch: stale_fail_closed
+connector_selection:
+  values:
+  - none
+  - fixed
+  - policy_routed
+  material_risks:
+  - write_internal
+  - send_internal
+  - send_external
+  - destructive
+  - privileged
+  none:
+    meaning: connectorless_not_late_selection
+    null_fields:
+    - connector_profile_id
+    - connector_binding_hash
+  fixed:
+    required_fields:
+    - connector_profile_id
+    - connector_binding_hash
+    actual_connector_must_match: true
+    current_binding_hash_must_match: true
+    mismatch: stale_fail_closed_rebuild_regate
+  policy_routed:
+    allowed_risks:
+    - read
+    - analyze
+    - draft
+    required:
+    - explicit
+    - policy_compliant
+    - audited
+    - requested_actual_Run_identity
+    scope_broadening: reevaluate_policy_and_resulting_gate
+  material_connector_execution_requires: fixed
+  binding_field_change_always_requires_new_revision: true
+connector_binding:
+  name: ConnectorBindingV1
+  algorithm: sha256(utf8(jcs_rfc8785(connector_binding_v1)))
+  schema_tag: maia.connector-binding.v1
+  fields:
+    schema: literal_schema_tag
+    connector_type: NonEmptyString
+    connector_profile_id: ConnectorProfileId
+    authority: connector_specific_canonical_account_tenant_identity_object
+    resource_scope: connector_specific_canonical_resource_mailbox_scope_object
+    execution_identity: connector_specific_canonical_non_secret_identity_object
+  projection_contract: registered_connector_specific_schema_defines_all_identity_scope_material
+  secrets_allowed: false
+  runtime_resolvers: deferred
+mcp:
+  invocation_requires_fingerprint: true
+  non_mcp_fingerprint: null
+  fingerprint_source: spec/mcp.yaml#tool_definition_pinning
+  operation_kind_source: trusted_action_type_contract_not_untrusted_payload
+  visible_field: tool_definition_fingerprint
+  input_and_binding_fingerprints_must_agree: true
+  current_tool_fingerprint_must_match: true
+action_binding:
+  name: ActionBindingV1
+  algorithm: sha256(utf8(jcs_rfc8785(action_binding_v1)))
+  schema_tag: maia.action-binding.v1
+  fields:
+  - schema
+  - action_id
+  - action_version
+  - plan_id
+  - plan_version
+  - ordinal
+  - action_type
+  - input_hash
+  - input_canonicalizer
+  - connector_selection
+  - connector_profile_id
+  - connector_binding_hash
+  - tool_definition_fingerprint
+  - risk_class
+  - source_preconditions
+  excluded_fields:
+  - state
+  - result_ref
+  - input_ref
+  - approval_state
+  - approval_version
+  - timestamps
+  - surface
+  - run_data
+  - policy_decision
+  decimal_string_paths:
+  - action_version
+  - plan_version
+  - input_canonicalizer.version
+  decimal_string_rule: ASCII_digits_no_sign_no_leading_zero_Version_range_1_to_u64_max
+  integer_paths:
+  - ordinal
+  nullable_paths:
+  - connector_profile_id
+  - connector_binding_hash
+  - tool_definition_fingerprint
+  null_encoding: explicit_JSON_null_never_omission
+  canonicalizer_fields:
+  - id
+  - version
+  source_precondition_fields:
+  - external_id
+  - source_version_token
+  - normalized_payload_hash
+  source_sort_keys:
+  - external_id
+  - source_version_token
+  - normalized_payload_hash
+  source_sort_order: raw_UTF8_bytes_lexicographic
+  exact_duplicate_source_tuples: reject
+  unicode_normalization: none
+  unknown_fields: reject
+material_revision_build_order:
+- preserve_or_replace_logical_ActionId
+- choose_next_Action_version_once
+- bind_exact_ExecutionPlan_revision
+- canonicalize_final_input
+- compute_input_hash
+- resolve_connector_selection_and_binding
+- bind_mcp_fingerprint_if_applicable
+- resolve_final_RiskClass
+- construct_ActionBindingV1
+- compute_action_hash
+- evaluate_policy
+- create_new_Approval_binding_unless_deny
+- execution_may_become_eligible
+```

@@ -1,0 +1,54 @@
+schema_version: 1
+scope: Privacy/data-governance support for personal data concerning the user and third parties represented in communication/work
+  context.
+principles:
+- lawful_basis_is_deployment_configuration_not_hardcoded_product_logic
+- purpose_limitation
+- data_minimization
+- accuracy_and_source_provenance
+- storage_limitation
+- security_and_auditability
+third_party_personal_data:
+  examples:
+  - Person
+  - RelationshipProfile
+  - Message participants
+  - Meeting participants
+  - MemoryClaim subjects
+  minimum_product_capabilities:
+  - locate_subject_linked_records
+  - export_subject_linked_records
+  - rectify_or_supersede_inaccurate_records
+  - restrict_or_suppress_processing_by_policy
+  - erase_or_anonymize_where_policy_and_law_permit
+  - propagate_deletion_to_indexes_and_derived_memory_subject_to_audit/legal-retention rules
+  sensitive_inference: forbidden_by_default
+  erasure_strategy:
+    strategy: policy_driven_erasure_or_pseudonymized_tombstone
+    default_when_structural_record_must_be_retained: pseudonymized_tombstone
+    tombstone_id: cryptographically_random_opaque_identifier; MUST NOT be a deterministic hash of email/name/other
+      PII
+    redact_fields:
+    - display_name
+    - emails
+    - teams_ids
+    - free_text_relationship_notes
+    - direct_identifiers
+    derived_data:
+    - purge_or_recompute_search_indexes
+    - purge_or_recompute_embeddings
+    - suppress_or_remove_derived_memory_claims
+    edge_policy: preserve only edges that remain necessary, non-identifying in context, and permitted by retention/legal
+      policy; otherwise aggregate/remove
+    audit_policy: retain only minimum legally/policy-required audit evidence in a separated protected retention
+      domain
+    terminology: A tombstone that remains linkable is pseudonymized personal data, not anonymous data.
+governance:
+  controller_processor_roles: deployment_decision
+  legal_basis: deployment_decision
+  retention_schedule: workspace_or_tenant_policy
+  data_subject_request_owner: deployment_decision
+  enterprise_release_gate: DPO/privacy/legal review required for the actual deployment context
+notes:
+- Rights such as erasure are not absolute; execution follows applicable law and controller policy. MAIA must provide
+  technical controls without pretending to choose the legal basis itself.

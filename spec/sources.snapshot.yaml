@@ -1,0 +1,72 @@
+schema_version: 1
+snapshot_date: '2026-09-11'
+sources:
+- id: MS_AGENTS_SDK
+  url: https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/agents-sdk-overview
+  purpose: Multichannel agent/channel abstraction and model-agnostic positioning.
+- id: MS_TEAMS_AGENTS
+  url: https://learn.microsoft.com/en-us/microsoftteams/platform/agents-in-teams/overview
+  purpose: Teams agent surfaces and extension to Outlook/M365.
+- id: MS_OUTLOOK_NEW
+  url: https://learn.microsoft.com/en-us/office/dev/add-ins/outlook/one-outlook
+  purpose: New Outlook does not support COM/VSTO; web add-ins are migration path.
+- id: MS_GRAPH_MAIL_DELTA
+  url: https://learn.microsoft.com/en-us/graph/delta-query-messages
+  purpose: Incremental mail synchronization.
+- id: MS_GRAPH_NOTIFICATIONS
+  url: https://learn.microsoft.com/en-us/graph/api/resources/change-notifications-api-overview?view=graph-rest-1.0
+  purpose: Change notification subscriptions for Outlook/Teams resources.
+- id: MCP_2026_07_28
+  url: https://blog.modelcontextprotocol.io/posts/2026-07-28/
+  purpose: 'Current MCP protocol direction: stateless core, auth hardening, extensions/tasks.'
+- id: VIKTOR_START
+  url: https://viktor.com/docs/getting-started
+  purpose: 'Benchmark: Slack/Teams coworker, broad integrations.'
+- id: VIKTOR_SCHEDULED
+  url: https://viktor.com/docs/scheduled-tasks
+  purpose: 'Benchmark: conversational scheduling.'
+- id: VIKTOR_API
+  url: https://viktor.com/docs/public-api
+  purpose: 'Benchmark: scoped API keys, asynchronous runs, MCP preference.'
+- id: VIKTOR_TOOLS
+  url: https://viktor.com/docs/connect-your-tools
+  purpose: 'Benchmark: OAuth tool connections and MCP/custom APIs.'
+- id: EU_GDPR_ART5_17
+  url: https://eur-lex.europa.eu/legal-content/EN-PL/TXT/?uri=CELEX:32016R0679
+  purpose: GDPR principles including purpose limitation/data minimisation and data-subject rectification/erasure
+    rights.
+- id: EDPB_DATA_SUBJECT_RIGHTS
+  url: https://www.edpb.europa.eu/topics/key-gdpr-concepts/data-subject-rights_en
+  purpose: Current EDPB overview of data-subject rights and controller procedures.
+- id: RFC8785_JCS
+  url: https://www.rfc-editor.org/rfc/rfc8785.html
+  purpose: JSON Canonicalization Scheme used for deterministic MCP tool-definition fingerprints.
+- id: MS_TEAMS_CORE_CONCEPTS
+  url: https://learn.microsoft.com/en-us/microsoftteams/platform/teams-sdk/teams/core-concepts
+  purpose: Teams/Bot routing requires an agent endpoint; local development uses DevTunnel.
+- id: MS_AGENTS_DEPLOY
+  url: https://learn.microsoft.com/en-us/microsoft-365/agents-sdk/deploy-azure-bot-service-manually
+  purpose: Production Agents SDK agent is a deployed web application with a public messaging endpoint.
+- id: MS_AZURE_RELAY
+  url: https://learn.microsoft.com/en-us/azure/azure-relay/relay-what-is-it
+  purpose: Hybrid Connections provide bidirectional HTTP/WebSocket relay without opening inbound firewall ports.
+- id: MS_COM_MESSAGE_FILTER
+  url: https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-imessagefilter-retryrejectedcall
+  purpose: COM IMessageFilter retry semantics for SERVERCALL_RETRYLATER / SERVERCALL_REJECTED.
+- id: MS_OFFICE_THREADING
+  url: https://learn.microsoft.com/en-us/visualstudio/vsto/threading-support-in-office
+  purpose: Office COM can reject calls while busy/modal; callers must handle/retry rejected calls.
+- id: MS_GRAPH_MESSAGE_RESOURCE
+  url: https://learn.microsoft.com/en-us/graph/api/resources/message?view=graph-rest-1.0
+  purpose: Message changeKey is the version token; messages support delta/change notifications.
+- id: MS_GRAPH_MESSAGE_SEND
+  url: https://learn.microsoft.com/en-us/graph/api/message-send?view=graph-rest-1.0
+  purpose: Send existing draft is POST and does not document an If-Match request header.
+- id: MS_TEAMS_CARD_FORMAT
+  url: https://learn.microsoft.com/en-us/microsoftteams/platform/task-modules-and-cards/cards/cards-format
+  purpose: Teams Adaptive Cards support Markdown links; Markdown images are not supported, while explicit Image
+    elements can reference URLs.
+- id: ADAPTIVE_CARD_IMAGE
+  url: https://adaptivecards.io/explorer/Image.html
+  purpose: Adaptive Card Image.url supports URI and data URI in schema 1.2+, motivating typed element allowlisting
+    for approval cards.

@@ -1,0 +1,248 @@
+schema_version: 1
+engine: SQLite+FTS5 for local desktop baseline; repository interfaces allow enterprise store later.
+tables:
+- workspaces
+- people
+- organizations
+- projects
+- threads
+- messages
+- meetings
+- commitments
+- decisions
+- work_items
+- relationship_profiles
+- memory_claims
+- agent_tasks
+- execution_plans
+- actions
+- runs
+- approvals
+- connector_profiles
+- credential_profiles
+- model_profiles
+- scheduled_jobs
+- artifacts
+- artifact_contents
+- events
+- audit_records
+- sync_cursors
+- subscriptions
+- settings
+never_store_plaintext:
+- api_keys
+- oauth_refresh_tokens
+- passwords
+- private_keys
+indexes:
+- project_id
+- thread_id
+- person_id
+- status
+- due_at
+- external_id
+- created_at
+- [workspace_id, source_locator_hash, content_sha256]
+- [workspace_id, content_sha256]
+- fts_user_content
+migration_rules:
+- versioned
+- backup_before_write
+- fixture_test_old_to_new
+- fail_closed_on_migration_error
+- no_silent_database_reset
+store_profiles:
+  local_authoritative:
+    engine: SQLite+FTS5
+    scope: single local workspace authority
+  enterprise_authoritative_reference:
+    engine: PostgreSQL
+    scope: managed/headless Core; tenant deployment may substitute an equivalent transactional store through repository
+      contracts
+  rule: Exactly one authoritative mutable store per workspace. Local and managed stores may synchronize/cache but
+    must not operate as independent multi-master authorities.
+execution_revision_contract_ref: spec/execution.yaml#run
+authoritative_store:
+  exactly_one_mutable_authority_per_workspace: true
+  authority_changing_write_transactions_serialized: true
+  local_authoritative_profile:
+    one_writable_authority_process_per_workspace: true
+    exclusive_os_level_file_lock_during_writable_authority: true
+    lock_unavailable: read_only_or_fail_closed
+    backup_is_never_parallel_writable_authority: true
+  enterprise_profile:
+    equivalent_transactional_authority_guarantee_required: true
+    distributed_split_brain_resolution: adapter_specific_lease_or_consensus
+identities:
+  unique:
+  - AgentTaskId
+  - ApprovalId
+  - RunId
+  - [ExecutionPlanId, version]
+  - [ActionId, version]
+  - [ActionId, action_version, attempt]
+  parent_integrity:
+  - AgentTask.workspace_id
+  - ExecutionPlan.task_id
+  - Action.plan_id
+  - Approval.task_id
+  - Approval.action_id
+  - Run.action_id
+  - Artifact.workspace_id
+  foreign_key_integrity_required: true
+aggregate_boundaries:
+  workspace_authority:
+    owns: [Workspace, AgentTask, AuditRecord]
+  plan_identity:
+    owns: [ExecutionPlan, Action]
+    revisions_immutable: true
+  approval_binding:
+    owns: [Approval]
+    binds: [ActionId, Action.version, action_hash]
+  run_attempt:
+    owns: [Run]
+    binds: [ActionId, Action.version, action_hash, ApprovalId, Approval.version]
+  evidence:
+    immutable_after_write: true
+    exact_run_binding_required: true
+  workspace_evidence_snapshot:
+    owns: [Artifact]
+    immutable_after_write: true
+    creates_memory_claims: false
+    creates_workgraph_edges: false
+history:
+  plan_action_approval_run_hard_delete_runtime_api: forbidden
+  supersession_preserves_history: true
+atomic_transactions:
+  authority_boundary: serialized_authority_changing_write
+  T1_material_action_revision:
+    steps:
+    - validate_current_revision
+    - persist_next_action_revision_exactly_once
+    - apply_state_aware_old_approval_mutation
+    - create_new_approval_binding_when_required_or_not_required
+    - append_audit_event
+    run_creation_included: false
+  T2_approval_decision_cas:
+    steps:
+    - revalidate_approval_version_state_binding_actor_expiry
+    - mutate_approval
+    - increment_approval_version
+    - append_audit_event
+  T3_run_creation:
+    steps:
+    - verify_task_allows_new_run
+    - verify_exact_current_action_revision_and_hash
+    - verify_exact_approval_record_and_version
+    - verify_current_authorization_requirements
+    - enforce_attempt_uniqueness
+    - insert_created_run
+    - append_audit_event
+    action_approval_creation_same_transaction_required: false
+  T4_run_transition_evidence:
+    steps:
+    - match_expected_run_version_and_state
+    - validate_required_evidence_reference_or_content
+    - transition_run
+    - increment_run_version
+    - append_evidence_when_required
+    - append_audit_event
+    evidence_required_for_reconciliation_or_freshness_transitions: true
+  T5_task_pause:
+    steps:
+    - match_expected_task_version_and_state
+    - request_pausing
+    - increment_task_version
+    - append_audit_event
+    race_guards:
+    - run_creation_rechecks_current_task_state
+    - created_to_starting_rechecks_current_task_state
+  T6_workspace_evidence_import:
+    steps:
+    - require_complete_host_acquisition_before_transaction
+    - validate_request_workspace_and_bounds
+    - reuse_or_create_workspace_scoped_immutable_content_by_content_sha256
+    - reuse_or_create_artifact_by_workspace_source_locator_hash_and_content_sha256
+    - append_one_minimal_audit_record_per_artifact_result
+    atomic_all_or_nothing: true
+    partial_artifacts_on_failure: forbidden
+    refusal_audit: separate_atomic_append_allowed
+evidence:
+  immutable_after_write: true
+  exact_binding: [run_id, action_id, action_version, action_hash]
+  identity: content_addressed_or_integrity_protected
+  connector_production_out_of_scope: true
+workspace_evidence_import:
+  contract_ref: spec/domain.yaml#artifact_contracts
+  supported_media_types: [utf8_plain_text, markdown]
+  bounds:
+    maximum_files_per_request: 8
+    maximum_file_bytes: 262144
+    maximum_total_bytes: 1048576
+  input_boundary:
+    caller_supplies_each_path_explicitly: true
+    local_regular_files_only: true
+    UNC_or_network_paths: forbidden
+    directory_input: forbidden
+    recursive_discovery: forbidden
+    symlink_junction_reparse_points: forbidden
+    unsupported_encoding: fail_closed
+    source_change_during_acquisition: fail_closed
+    acquisition_rule: read_exactly_one_opened_regular_file_then_revalidate_identity_and_length
+  duplicate_behavior:
+    same_workspace_same_source_same_bytes: return_existing_artifact_and_append_idempotent_audit
+    same_workspace_same_source_changed_bytes: create_new_immutable_artifact_preserve_prior_artifact
+    same_workspace_different_source_identical_bytes: distinct_artifact_provenance_reuse_workspace_scoped_content_storage
+    different_workspace_identical_bytes: no_cross_workspace_content_deduplication
+  snapshot_read:
+    reads_MAIA_owned_content_not_external_source: true
+    restart_reopen_returns_same_artifact_and_citation_identity: true
+    external_source_change_or_deletion_affects_existing_snapshot: false
+  lifecycle:
+    artifact_runtime_hard_delete: forbidden
+    source_deletion_does_not_delete_artifact: true
+    workspace_erasure_policy: existing_audit_tombstone_or_later_explicit_policy
+  audit:
+    success_event_type: workspace_evidence_imported
+    idempotent_event_type: workspace_evidence_import_idempotent
+    refusal_event_type: workspace_evidence_import_refused
+    subject_type: artifact
+    subject_ref: ArtifactId
+    operation_ref: EvidenceImportRequestId
+    provenance_reference: source_locator_hash
+    content_or_raw_locator_in_audit: forbidden
+policy_snapshot:
+  approval_policy_snapshot_hash_preserved: true
+  provider_or_administration_out_of_scope: true
+  opaque_reference_allowed: true
+  historical_audit_must_not_substitute_current_policy: true
+migrations:
+  ledger_fields: [migration_id, checksum, applied_at]
+  monotonic_sequence: true
+  applied_checksum_immutable: true
+  backup_before_write: true
+  transactional_when_engine_allows: true
+  newer_schema_than_binary: fail_closed
+  checksum_mismatch: fail_closed
+  silent_repair: forbidden
+backup_recovery:
+  consistent_backup_before_migration: true
+  backup_is_not_writable_authority: true
+  restore_mode: offline_explicit
+  automatic_backup_failover: forbidden
+  startup_integrity_failure: fail_closed
+  engine_crash_recovery: SQLite_WAL_allowed
+clock:
+  application_time_source: injected_runtime_clock
+  store_is_not_time_authority: true
+  audit_order_source: per_workspace_sequence
+erasure:
+  execution_audit_scope: minimize_direct_personal_data_before_append
+  normal_history_cascade_delete: forbidden
+  full_person_memory_workgraph_erasure: later_milestone
+errors:
+  cas_mismatch: ExternalConflict
+  corruption: fail_closed
+  migration_incompatibility: MigrationError
+  unavailable_writable_authority: PersistenceError
+  exhausted_storage_busy: PersistenceError

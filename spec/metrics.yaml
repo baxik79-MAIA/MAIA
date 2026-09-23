@@ -1,0 +1,69 @@
+schema_version: 1
+metrics:
+  time_to_first_value:
+    symbol: TTFV
+    clock_starts_at: first_point_with_sufficient_authorized_usable_data_or_context
+    qualifying_events:
+    - explicit_user_confirmation_or_acceptance
+    - confirmation_of_source_grounded_commitment_decision_or_risk
+    - approval_or_use_of_proposed_follow_up_or_useful_action
+    - verified_outcome
+    - other_explicit_canonical_value_event
+    excluded_events:
+    - application_open
+    - installer_launch
+    - data_import_without_user_work_value
+    - generic_text_generation
+    - model_response_success
+    event_classes:
+    - system_detected_value_event
+    - user_confirmed_value_event
+  time_to_first_action:
+    symbol: TTFA
+    qualifying_action: real_semantic_MAIA_Action_reaching_its_existing_canonical_execution_state
+    excluded_events:
+    - diagnostic
+    - no_op
+    - installation_plumbing
+    - configuration_plumbing
+    - test_action
+    approval_requirements_may_be_weakened_for_metric: false
+  successful_outcome_rate:
+    numerator: verified_Outcomes
+    denominator: benchmarked_or_production_cases_under_declared_verification_rule
+  human_intervention_effort:
+    source: spec/commercial.yaml#human_intervention
+  cost_per_successful_outcome:
+    denominator: verified_Outcomes
+    components_when_evidence_exists:
+    - model_usage
+    - infrastructure
+    - third_party_or_tool_cost
+    - human_intervention
+    - support_or_manual_execution
+    unknown_component_behavior: preserve_unknown_never_assume_zero
+  repeatability_effort:
+    measures:
+    - onboarding_manual_setup_effort
+    - custom_implementation_effort
+    - operator_intervention
+    - reusable_vs_customer_specific_configuration
+    interpretation: materially_different_bespoke_work_indicates_service_or_consulting_behavior_not_proven_scalable_product_repeatability
+measured_advantage_rule:
+  competitive_or_product_advantage_requires: instrumented_measurement_or_named_benchmark
+  minimum_falsifiable_measures:
+  - successful_outcome_rate
+  - human_review_or_correction_effort
+  - cost_per_successful_outcome
+  - time_to_first_value
+  - time_to_first_action
+  - repeatability_effort
+  benchmark_requirements:
+  - named_baseline
+  - case_set
+  - verification_rule
+  - model_tool_versions_when_relevant
+  - known_and_unknown_costs
+  - preserved_failures_and_disagreement
+privacy:
+  raw_customer_content_in_product_telemetry: forbidden_by_default

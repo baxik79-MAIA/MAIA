@@ -1,0 +1,41 @@
+schema_version: 1
+execution_modes:
+  local_legacy:
+    external_api_required: false
+    mail_transport: outlook_classic_com
+    llm: local_or_manual
+    egress: policy_dependent
+    purpose: Current bootstrap mode for locked-down Windows environments.
+  connected_m365:
+    external_api_required: true
+    mail_transport: microsoft_graph
+    channels:
+    - teams
+    - outlook
+    - m365_copilot
+    egress: tenant_and_policy_controlled
+  connected_generic:
+    external_api_required: true
+    mail_transport: connector_defined
+    channels:
+    - desktop
+    - web
+    - third_party
+    egress: connector_and_policy_controlled
+  hybrid:
+    external_api_required: optional
+    mail_transport: best_available_connector
+    llm: local_and_cloud
+    egress: per_task_policy
+  policy_auto:
+    external_api_required: depends
+    mail_transport: routed
+    llm: routed
+    egress: depends
+    purpose: Select only among policy-compliant connectors and models.
+privacy_classes:
+  local_only: No payload leaves the local device except user-approved corporate-client actions already performed
+    by that client.
+  tenant_only: Data may move only inside approved organization/M365 tenant boundaries.
+  controlled_external: External AI/API allowed only for data classes and providers explicitly approved by policy.
+  external_allowed: External providers allowed subject to connector scopes, user policy and action approval.

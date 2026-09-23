@@ -1,0 +1,3 @@
+digraph G {rankdir=LR; graph [bgcolor="white",pad="0.2"]; node [shape=box,style="rounded,filled",fontname="DejaVu Sans",fontsize=9,fillcolor="#F5F7FA",color="#596273"]; edge [color="#77808F"];
+"User request"->"Task"->"Preflight"->"Plan"->"Policy gates"; "Policy gates"->"Approval" [label="if needed"]; "Policy gates"->"Queue" [label="safe"]; "Approval"->"Queue" [label="approved"]; "Queue"->"Action Run"->"Verify / reconcile"->"Update WorkGraph / Audit"->"Return result"; "Action Run"->"Retry" [label="retryable"]; "Retry"->"Action Run"; "Action Run"->"Outcome unknown" [label="ambiguous side effect"]; "Outcome unknown"->"Verify / reconcile"; "Task"->"Pausing" [label="pause request"]; "Pausing"->"Paused" [label="no run in flight"]; "Paused"->"Queue" [label="resume"];
+}

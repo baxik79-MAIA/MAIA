@@ -1,0 +1,65 @@
+schema_version: 1
+mail_intelligence:
+  pipeline:
+  - ingest
+  - normalize
+  - thread_link
+  - trust_classify
+  - entity_link
+  - project_link
+  - intent_extract
+  - commitment_extract
+  - decision_extract
+  - urgency_score
+  - reply_need_score
+  - draft_context_build
+  signals:
+  - sender_relationship
+  - direct_question
+  - explicit_deadline
+  - overdue_commitment
+  - meeting_followup
+  - vip_or_priority_rule
+  - external_domain
+  - sensitivity_label
+  - recipient_count
+  - reply_all_risk
+  outputs:
+  - summary
+  - why_it_matters
+  - suggested_action
+  - draft_reply
+  - commitments
+  - decisions
+  - project_links
+  - risk_flags
+draft_rules:
+- never_send_from_draft_generation
+- preserve_thread_language_unless_user_policy_overrides
+- tone_uses_relationship_profile_but_never_invents_facts
+- quote_previous_decisions_only_with_source_ref
+commitment_extraction:
+  default_extracted_status: candidate
+  never_auto_confirm_from_free_text: true
+  required_checks:
+  - speaker_or_author_attribution
+  - quotation_boundary
+  - negation
+  - conditionality
+  - modality_or_hedging
+  - deadline_or_time_reference_if_present
+  - source_ref
+  language_profiles:
+    pl:
+      stronger_signals:
+      - first-person future/perfective commitment such as "zrobię" when not negated/quoted/conditional
+      - explicit owner + deliverable + deadline
+      hedged_or_weak_signals:
+      - '"postaram się"'
+      - '"spróbuję"'
+      - '"będę próbował"'
+      - conditional/subjunctive or courtesy language
+      rule: Aspect/modality adjusts confidence only. It never upgrades free-text extraction directly to confirmed.
+    en:
+      rule: Distinguish explicit commitment (I will / I commit to) from hedging (I will try / might / should) and
+        preserve attribution/negation.

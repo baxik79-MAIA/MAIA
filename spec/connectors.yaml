@@ -1,0 +1,97 @@
+schema_version: 1
+contract:
+  required_methods:
+  - discover_capabilities
+  - health_check
+  - normalize_identity
+  - execute
+  - cancel
+  - sanitize_error
+  optional_methods:
+  - subscribe
+  - renew_subscription
+  - delta_sync
+  - webhook_ack
+  - get_rate_limit_state
+  execution_metadata:
+  - requested_connector
+  - actual_connector
+  - capabilities_used
+  - external_ids
+  - tenant_scope
+  - latency_ms
+built_in:
+  outlook_classic_com:
+    phase: bootstrap
+    surface: windows_desktop
+    capabilities:
+    - mail.read
+    - mail.search
+    - mail.draft
+    - mail.send
+    - mail.move
+    - calendar.read
+    notes: Current TrustedBridge path; unsupported by new Outlook. Calendar is read-only in the canonical legacy
+      capability profile.
+  microsoft_graph:
+    phase: target
+    surface: m365
+    capabilities:
+    - mail.read
+    - mail.search
+    - mail.draft
+    - mail.send
+    - mail.move
+    - mail.delete
+    - calendar.read
+    - calendar.write
+    - subscriptions
+    - delta_sync
+    - files.read
+    - files.write
+  teams_agent_channel:
+    phase: target
+    surface: teams
+    capabilities:
+    - conversation.receive
+    - conversation.send
+    - adaptive_cards
+    - proactive_message
+    - mentions
+  outlook_web_addin:
+    phase: target
+    surface: outlook
+    capabilities:
+    - contextual_ui
+    - compose_assist
+    - read_item_context
+    notes: UX surface, not the canonical mail store.
+  local_files:
+    phase: alpha
+    surface: local
+    capabilities:
+    - files.read
+    - files.write
+    - files.search
+  mcp_remote:
+    phase: target
+    surface: protocol
+    capabilities:
+    - tools.discover
+    - tools.call
+    - resources.read
+  generic_imap_smtp:
+    phase: future
+    surface: mail
+    capabilities:
+    - mail.read
+    - mail.search
+    - mail.send
+    notes: Optional non-M365 portability path.
+principles:
+- connector_capabilities_not_product_names_drive_orchestration
+- mail_identity_normalization_is_connector_neutral
+- no_connector_specific_business_logic_in_ui
+- fallback_never_changes_side_effect_semantics_silently
+- os_specific_dependencies_are_confined_to_connector_or_surface_adapters
+execution_binding_ref: spec/action_binding.yaml#connector_binding

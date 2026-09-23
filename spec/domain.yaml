@@ -1,0 +1,1432 @@
+schema_version: 1
+entities:
+  Workspace:
+  - id
+  - name
+  - owner_id
+  - policy_profile_id
+  - created_at
+  - updated_at
+  Person:
+  - id
+  - display_name
+  - emails
+  - teams_ids
+  - organization_id
+  - relationship_profile_id
+  - confidence
+  - created_at
+  - updated_at
+  Organization:
+  - id
+  - name
+  - domains
+  - tags
+  - created_at
+  - updated_at
+  Project:
+  - id
+  - name
+  - status
+  - tags
+  - summary
+  - owner_id
+  - created_at
+  - updated_at
+  Thread:
+  - id
+  - channel
+  - external_thread_id
+  - subject
+  - project_id
+  - participants
+  - last_activity_at
+  - classification
+  Message:
+  - id
+  - thread_id
+  - external_id
+  - external_version
+  - sender_id
+  - recipients
+  - sent_at
+  - received_at
+  - body_ref
+  - trust
+  - classification
+  Meeting:
+  - id
+  - external_id
+  - external_version
+  - title
+  - start_at
+  - end_at
+  - participants
+  - project_id
+  - transcript_ref
+  - status
+  Commitment:
+  - id
+  - owner_person_id
+  - beneficiary_person_id
+  - project_id
+  - source_ref
+  - text
+  - due_at
+  - status
+  - confidence
+  Decision:
+  - id
+  - project_id
+  - source_ref
+  - statement
+  - decided_by
+  - decided_at
+  - confidence
+  - supersedes_id
+  WorkItem:
+  - id
+  - project_id
+  - title
+  - description
+  - owner_id
+  - due_at
+  - status
+  - priority
+  - source_ref
+  RelationshipProfile:
+  - id
+  - person_id
+  - language
+  - tone
+  - formality
+  - response_style
+  - working_context
+  - last_contact_at
+  MemoryClaim:
+  - id
+  - scope
+  - subject_ref
+  - predicate
+  - value_json
+  - source_ref
+  - status
+  - confidence
+  - valid_from
+  - valid_until
+  AgentTask:
+  - id
+  - version
+  - workspace_id
+  - request_text
+  - origin_surface
+  - origin_ref
+  - state
+  - privacy_class
+  - requested_by
+  - created_at
+  ExecutionPlan:
+  - id
+  - task_id
+  - version
+  - risk_summary
+  - estimated_cost
+  - approval_requirement
+  - created_at
+  Action:
+  - id
+  - plan_id
+  - ordinal
+  - action_type
+  - connector_profile_id
+  - risk_class
+  - state
+  - input_ref
+  - source_preconditions
+  - result_ref
+  - version
+  - plan_version
+  - input_hash
+  - input_canonicalizer
+  - connector_selection
+  - connector_binding_hash
+  - tool_definition_fingerprint
+  Run:
+  - id
+  - version
+  - action_id
+  - attempt
+  - requested_connector_id
+  - actual_connector_id
+  - requested_model_id
+  - actual_model_id
+  - state
+  - outcome_certainty
+  - reconciliation_ref
+  - started_at
+  - ended_at
+  - action_version
+  - action_hash
+  - approval_id
+  - approval_version
+  Approval:
+  - id
+  - task_id
+  - action_id
+  - policy_id
+  - state
+  - requested_at
+  - decided_at
+  - decided_by
+  - decision_note
+  - action_hash
+  - version
+  - expires_at
+  - origin_surface
+  - decided_surface
+  - action_version
+  - policy_snapshot_hash
+  - policy_decision
+  - required_assurance
+  - achieved_assurance
+  ConnectorProfile:
+  - id
+  - connector_type
+  - label
+  - capabilities
+  - credential_profile_id
+  - health
+  - policy_tags
+  CredentialProfile:
+  - id
+  - provider
+  - label
+  - secret_ref
+  - scopes
+  - status
+  - last_validated_at
+  ModelProfile:
+  - id
+  - provider
+  - model_id
+  - endpoint_profile_id
+  - credential_profile_id
+  - capabilities
+  - privacy_tags
+  - billing_mode
+  ScheduledJob:
+  - id
+  - workspace_id
+  - task_template_ref
+  - schedule
+  - state
+  - next_run_at
+  - last_run_at
+  Artifact:
+  - id
+  - workspace_id
+  - kind
+  - name
+  - media_type
+  - content
+  - content_sha256
+  - byte_length
+  - source_locator
+  - source_locator_hash
+  - import_request_id
+  - trust
+  - classification
+  - created_at
+  Tenant:
+  - id
+  - legal_name_or_label
+  - status
+  - data_region
+  - policy_profile_id
+  - billing_account_ref
+  - created_at
+  - updated_at
+  Membership:
+  - id
+  - tenant_id
+  - workspace_id
+  - person_or_user_ref
+  - role
+  - status
+  - created_at
+  - updated_at
+  Entitlement:
+  - id
+  - tenant_id
+  - capability_or_feature
+  - allowance
+  - source_plan_ref
+  - valid_from
+  - valid_until
+  Outcome:
+  - id
+  - workspace_id
+  - task_id
+  - plan_id
+  - action_id
+  - run_id
+  - commitment_ref
+  - project_ref
+  - subject_ref
+  - expected_result
+  - observed_result
+  - status
+  - evidence_refs
+  - verification_method
+  - supersedes_outcome_id
+  - created_at
+  - observed_at
+  - verified_at
+  UsageRecord:
+  - id
+  - workspace_id
+  - tenant_id
+  - task_id
+  - run_id
+  - provider_ref
+  - usage_type
+  - quantity
+  - unit
+  - cost_status
+  - cost_minor
+  - currency
+  - pricing_source
+  - created_at
+  Event:
+  - id
+  - task_id
+  - run_id
+  - event_type
+  - payload_json
+  - created_at
+  AuditRecord:
+  - audit_id
+  - workspace_id
+  - sequence
+  - recorded_at
+  - actor_ref
+  - event_type
+  - subject_type
+  - subject_ref
+  - operation_ref
+  - decision_ref
+  - metadata_hash
+  - prev_hash
+  - record_hash
+provenance_rules:
+- every_external_object_keeps_connector_and_external_id
+- every_action_persists_requested_and_actual_connector
+- every_model_run_persists_requested_and_actual_model
+- extracted_commitments_keep_source_ref
+- memory_claims_without_sources_are_never_authoritative
+primitives:
+  WorkspaceId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  AgentTaskId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  ExecutionPlanId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  ActionId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  RunId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  ApprovalId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  ConnectorProfileId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  ModelProfileId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  AuditId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  ArtifactId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  EvidenceImportRequestId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  TenantId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  MembershipId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  EntitlementId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  OutcomeId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  UsageRecordId:
+    wire_type: string
+    format: uuid
+    uuid_version: 7
+    canonical_text: lowercase_hyphenated
+    rust_type: distinct_strong_newtype
+  Utf8String:
+    wire_type: string
+    encoding: UTF-8
+  NonEmptyString:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+  PolicyId:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+    semantics: opaque
+    normalization: none
+    uuid_required: false
+  ActorRef:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+    semantics: opaque
+    normalization: none
+    represents: authorized_user_service_or_policy_actor
+  OpaqueRef:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+    semantics: opaque
+    normalization: none
+    infer_path_or_uri_semantics: false
+  SurfaceId:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+    registry: open
+    examples_non_normative:
+    - desktop
+    - teams
+    - outlook
+    - web
+  ActionType:
+    wire_type: string
+    pattern: ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+  Timestamp:
+    wire_type: string
+    format: RFC3339
+    timezone: UTC
+    canonical_serialization: YYYY-MM-DDTHH:MM:SS.sssZ
+    fractional_second_digits: 3
+    canonical_timezone_suffix: Z
+    parser_acceptance: valid_RFC3339_may_be_accepted_and_normalized
+  Version:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 1
+    maximum: 18446744073709551615
+    monotonic_scope: versioned_aggregate_or_object
+    monotonically_increases: true
+    overflow: fail_closed_never_wrap_saturate_or_reuse
+  Ordinal:
+    wire_type: integer
+    signed: false
+    bits: 32
+    minimum: 0
+    maximum: 4294967295
+  Attempt:
+    wire_type: integer
+    signed: false
+    bits: 32
+    minimum: 1
+    maximum: 4294967295
+  AuditSequence:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 1
+    maximum: 18446744073709551615
+    monotonic_scope: workspace_audit_chain
+    monotonically_increases: true
+    overflow: fail_closed_never_wrap_saturate_or_reuse
+  AmountMicros:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 0
+    maximum: 18446744073709551615
+  AmountMinor:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 0
+    maximum: 18446744073709551615
+  UsageQuantity:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 0
+    maximum: 18446744073709551615
+  ByteCount:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 0
+    maximum: 18446744073709551615
+  LineNumber:
+    wire_type: integer
+    signed: false
+    bits: 64
+    minimum: 1
+    maximum: 18446744073709551615
+  Sha256Hex:
+    wire_type: string
+    pattern: ^[0-9a-f]{64}$
+  CurrencyCode:
+    wire_type: string
+    pattern: ^[A-Z]{3}$
+    semantics: ISO-4217-compatible_code_shape
+  PrivacyClass:
+    wire_type: string
+    enum_source: spec/modes.yaml#privacy_classes
+    source_selection: mapping_keys
+  RiskClass:
+    wire_type: string
+    enum_source: spec/approval.yaml#risk_classes
+    source_selection: mapping_keys
+  GateType:
+    wire_type: string
+    enum_source: spec/approval.yaml#gate_types
+    source_selection: mapping_keys
+  AgentTaskState:
+    wire_type: string
+    enum_source: spec/states.yaml#machines.AgentTaskState.states
+    transitions_source: spec/states.yaml#machines.AgentTaskState.transitions
+  ActionState:
+    wire_type: string
+    enum_source: spec/states.yaml#machines.ActionState.states
+    transitions_source: spec/states.yaml#machines.ActionState.transitions
+  RunState:
+    wire_type: string
+    enum_source: spec/states.yaml#machines.RunState.states
+    transitions_source: spec/states.yaml#machines.RunState.transitions
+  ApprovalState:
+    wire_type: string
+    enum_source: spec/states.yaml#machines.ApprovalState.states
+    transitions_source: spec/states.yaml#machines.ApprovalState.transitions
+  ConnectorSelection:
+    wire_type: string
+    enum_source: spec/action_binding.yaml#connector_selection.values
+  PolicyDecision:
+    wire_type: string
+    enum_source: spec/approval.yaml#policy_decision.values
+  ApprovalAssurance:
+    wire_type: string
+    enum_source: spec/approval.yaml#assurance.values
+  ApprovalBindingValidity:
+    wire_type: string
+    enum_source: spec/approval.yaml#binding_validity.values
+  ReconciliationResult:
+    wire_type: string
+    enum_source: spec/execution.yaml#reconciliation.values
+  FreshnessResult:
+    wire_type: string
+    enum_source: spec/execution.yaml#freshness.values
+  FreshnessEnforcement:
+    wire_type: string
+    enum_source: spec/execution.yaml#freshness.enforcement
+  RecipientBoundary:
+    wire_type: string
+    enum_source: spec/approval.yaml#recipient_boundary.values
+  AuditEventType:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+    semantics: validated_registry_identifier
+  AuditSubjectType:
+    wire_type: string
+    encoding: UTF-8
+    min_length: 1
+    semantics: validated_registry_identifier
+  ArtifactKind:
+    wire_type: string
+    enum_source: spec/domain.yaml#artifact_snapshot.artifact_kinds
+  EvidenceMediaType:
+    wire_type: string
+    enum_source: spec/domain.yaml#artifact_snapshot.media_types
+  OutcomeStatus:
+    wire_type: string
+    enum_source: spec/outcomes.yaml#lifecycle.statuses
+  ReasoningAssuranceLevel:
+    wire_type: string
+    enum_source: spec/reasoning.yaml#assurance_levels
+    source_selection: mapping_keys
+  UsageCostStatus:
+    wire_type: string
+    enum_source: spec/commercial.yaml#usage.cost_statuses
+value_objects:
+  CostEstimate:
+    fields:
+      amount_micros:
+        type: AmountMicros
+        required: true
+        nullable: false
+      currency:
+        type: CurrencyCode
+        required: true
+        nullable: false
+    amount_unit: millionths_of_major_currency_unit
+    floating_point_allowed: false
+    informational_only: true
+    authorizes_execution: false
+    lowers_risk: false
+  SourcePrecondition:
+    fields:
+      external_id:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      source_version_token:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      normalized_payload_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+    semantics: freshness_condition_for_mutable_external_source
+    connector_context: Action.connector_profile_id
+    mismatch_policy_ref: spec/sync.yaml#pre_side_effect_freshness
+    connector_specific_semantics: false
+  OutcomeCertainty:
+    wire_type: string
+    values:
+    - not_applicable
+    - known
+    - unknown
+    state_source: spec/states.yaml#machines.RunState.states
+    state_coupling:
+      created: not_applicable
+      starting: not_applicable
+      running: not_applicable
+      outcome_unknown: unknown
+      reconciling: unknown
+      retryable_error: known
+      completed: known
+      failed: known
+      canceled: known
+    reconciliation_resolution: unknown_to_known_only_when_outcome_resolved_enough_to_leave_reconciliation
+  RiskSummary:
+    wire_type: array
+    items: RiskClass
+    unique_items: true
+    ordering: declaration_order
+    ordering_source: spec/approval.yaml#risk_classes
+    informational_only: true
+    replaces_per_action_risk_or_gate: false
+  CanonicalizerRef:
+    fields:
+      id:
+        type: NonEmptyString
+        required: true
+        nullable: false
+      version:
+        type: Version
+        required: true
+        nullable: false
+    semantics: versioned_action_type_specific_canonicalizer
+  ReconciliationEvidence:
+    fields:
+      run_id:
+        type: RunId
+        required: true
+        nullable: false
+      action_id:
+        type: ActionId
+        required: true
+        nullable: false
+      action_version:
+        type: Version
+        required: true
+        nullable: false
+      action_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      effect_identity:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      source_ref:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      result:
+        type: ReconciliationResult
+        required: true
+        nullable: false
+    rules_ref: spec/execution.yaml#reconciliation
+  FreshnessEvidence:
+    fields:
+      run_id:
+        type: RunId
+        required: true
+        nullable: false
+      action_id:
+        type: ActionId
+        required: true
+        nullable: false
+      action_version:
+        type: Version
+        required: true
+        nullable: false
+      action_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      enforcement:
+        type: FreshnessEnforcement
+        required: true
+        nullable: false
+      precondition:
+        type: SourcePrecondition
+        required: true
+        nullable: false
+      observed_source_version_token:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      observed_payload_hash:
+        type: Sha256Hex
+        required: false
+        nullable: true
+      result:
+        type: FreshnessResult
+        required: true
+        nullable: false
+    rules_ref: spec/execution.yaml#freshness
+artifact_snapshot:
+  artifact_kinds:
+  - imported_text_evidence
+  media_types:
+  - utf8_plain_text
+  - markdown
+  content_representation:
+    decoding: strict_UTF-8
+    newline_normalization: forbidden
+    Unicode_normalization: forbidden
+    content_sha256: SHA-256_over_exact_imported_source_bytes
+    byte_length: exact_imported_source_byte_count
+    snapshot_content: MAIA-owned_immutable_UTF-8_text
+  provenance:
+    source_locator: private_workspace_scoped_provenance_not_citation_identity
+    source_locator_hash: SHA-256_over_exact_source_locator_UTF-8
+  knowledge_boundary:
+    creates_memory_claim: false
+    creates_workgraph_edges: false
+    infers_semantics: false
+artifact_contracts:
+  EvidenceImportSource:
+    fields:
+      source_locator:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      name:
+        type: NonEmptyString
+        required: true
+        nullable: false
+      media_type:
+        type: EvidenceMediaType
+        required: true
+        nullable: false
+  EvidenceImportRequest:
+    fields:
+      id:
+        type: EvidenceImportRequestId
+        required: true
+        nullable: false
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      requested_by:
+        type: ActorRef
+        required: true
+        nullable: false
+      requested_at:
+        type: Timestamp
+        required: true
+        nullable: false
+      sources:
+        type: list<EvidenceImportSource>
+        required: true
+        nullable: false
+    rules:
+      input_paths_are_host_boundary: true
+      persisted_request_identity: EvidenceImportRequestId
+      partial_success: forbidden
+  Artifact:
+    fields:
+      id:
+        type: ArtifactId
+        required: true
+        nullable: false
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      kind:
+        type: ArtifactKind
+        required: true
+        nullable: false
+      name:
+        type: NonEmptyString
+        required: true
+        nullable: false
+      media_type:
+        type: EvidenceMediaType
+        required: true
+        nullable: false
+      content:
+        type: Utf8String
+        required: true
+        nullable: false
+      content_sha256:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      byte_length:
+        type: ByteCount
+        required: true
+        nullable: false
+      source_locator:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      source_locator_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      import_request_id:
+        type: EvidenceImportRequestId
+        required: true
+        nullable: false
+      trust:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      classification:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      created_at:
+        type: Timestamp
+        required: true
+        nullable: false
+    rules:
+      immutable_after_write: true
+      content_is_MAIA_owned_snapshot: true
+      source_locator_is_private_provenance: true
+      source_modification_or_deletion_changes_snapshot: false
+      semantic_extraction: forbidden
+  EvidenceCitation:
+    fields:
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      artifact_id:
+        type: ArtifactId
+        required: true
+        nullable: false
+      content_sha256:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      start_line:
+        type: LineNumber
+        required: false
+        nullable: true
+      end_line:
+        type: LineNumber
+        required: false
+        nullable: true
+    rules:
+      canonical_identity: [workspace_id, artifact_id, content_sha256, start_line, end_line]
+      external_source_locator_is_citation_identity: false
+      line_positions_reference: immutable_MAIA_snapshot
+      line_range: both_absent_for_artifact_citation_or_both_present_inclusive_start_lte_end
+outcome_contracts:
+  Outcome:
+    fields:
+      id:
+        type: OutcomeId
+        required: true
+        nullable: false
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      task_id:
+        type: AgentTaskId
+        required: false
+        nullable: true
+      plan_id:
+        type: ExecutionPlanId
+        required: false
+        nullable: true
+      action_id:
+        type: ActionId
+        required: false
+        nullable: true
+      run_id:
+        type: RunId
+        required: false
+        nullable: true
+      commitment_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      project_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      subject_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      expected_result:
+        type: Utf8String
+        required: false
+        nullable: true
+      observed_result:
+        type: Utf8String
+        required: false
+        nullable: true
+      status:
+        type: OutcomeStatus
+        required: true
+        nullable: false
+      evidence_refs:
+        type: list<OpaqueRef>
+        required: true
+        nullable: false
+      verification_method:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      supersedes_outcome_id:
+        type: OutcomeId
+        required: false
+        nullable: true
+      created_at:
+        type: Timestamp
+        required: true
+        nullable: false
+      observed_at:
+        type: Timestamp
+        required: false
+        nullable: true
+      verified_at:
+        type: Timestamp
+        required: false
+        nullable: true
+    rules:
+      lifecycle_ref: spec/outcomes.yaml#lifecycle
+      business_outcome_is_not_run_outcome_certainty: true
+      context_ref: one_or_more_of_task_plan_action_run_commitment_project_or_subject
+      model_confidence_alone_verifies_outcome: false
+  UsageRecord:
+    fields:
+      id:
+        type: UsageRecordId
+        required: true
+        nullable: false
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      tenant_id:
+        type: TenantId
+        required: false
+        nullable: true
+      task_id:
+        type: AgentTaskId
+        required: false
+        nullable: true
+      run_id:
+        type: RunId
+        required: false
+        nullable: true
+      provider_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      usage_type:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      quantity:
+        type: UsageQuantity
+        required: true
+        nullable: false
+      unit:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      cost_status:
+        type: UsageCostStatus
+        required: true
+        nullable: false
+      cost_minor:
+        type: AmountMinor
+        required: false
+        nullable: true
+      currency:
+        type: CurrencyCode
+        required: false
+        nullable: true
+      pricing_source:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      created_at:
+        type: Timestamp
+        required: true
+        nullable: false
+    rules:
+      cost_status_ref: spec/commercial.yaml#usage.cost_statuses
+      unknown_cost_is_zero: false
+      known_cost_requires_cost_minor_and_currency: true
+execution_contracts:
+  AgentTask:
+    fields:
+      id:
+        type: AgentTaskId
+        required: true
+        nullable: false
+      version:
+        type: Version
+        required: true
+        nullable: false
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      request_text:
+        type: NonEmptyString
+        required: true
+        nullable: false
+      origin_surface:
+        type: SurfaceId
+        required: true
+        nullable: false
+      origin_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      state:
+        type: AgentTaskState
+        required: true
+        nullable: false
+      privacy_class:
+        type: PrivacyClass
+        required: true
+        nullable: false
+      requested_by:
+        type: ActorRef
+        required: true
+        nullable: false
+      created_at:
+        type: Timestamp
+        required: true
+        nullable: false
+    rules:
+      version_semantics: mutable_record_cas_version
+      initial_version: 1
+      successful_mutation: expected_version_and_state_then_increment
+      overflow: fail_closed
+  ExecutionPlan:
+    fields:
+      id:
+        type: ExecutionPlanId
+        required: true
+        nullable: false
+      task_id:
+        type: AgentTaskId
+        required: true
+        nullable: false
+      version:
+        type: Version
+        required: true
+        nullable: false
+      risk_summary:
+        type: RiskSummary
+        required: true
+        nullable: false
+      estimated_cost:
+        type: CostEstimate
+        required: false
+        nullable: true
+      approval_requirement:
+        type: GateType
+        required: true
+        nullable: false
+      created_at:
+        type: Timestamp
+        required: true
+        nullable: false
+    rules:
+      estimated_cost_absent_or_null: no_reliable_monetary_estimate
+      zero_cost: valid_known_estimate
+      approval_requirement: strongest_worst_case_gate_under_evaluated_policy_context
+      approval_requirement_informational_only: true
+      each_action_independently_risk_resolved_and_gated: true
+      revision_identity: immutable_id_and_version_pair
+      policy_deny: separate_PolicyDecision_deny_never_encoded_as_GateType
+  Action:
+    fields:
+      id:
+        type: ActionId
+        required: true
+        nullable: false
+      plan_id:
+        type: ExecutionPlanId
+        required: true
+        nullable: false
+      ordinal:
+        type: Ordinal
+        required: true
+        nullable: false
+      action_type:
+        type: ActionType
+        required: true
+        nullable: false
+      connector_profile_id:
+        type: ConnectorProfileId
+        required: false
+        nullable: true
+      risk_class:
+        type: RiskClass
+        required: true
+        nullable: false
+      state:
+        type: ActionState
+        required: true
+        nullable: false
+      input_ref:
+        type: OpaqueRef
+        required: true
+        nullable: false
+      source_preconditions:
+        type: list<SourcePrecondition>
+        required: true
+        nullable: false
+      result_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      version:
+        type: Version
+        required: true
+        nullable: false
+      plan_version:
+        type: Version
+        required: true
+        nullable: false
+      input_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      input_canonicalizer:
+        type: CanonicalizerRef
+        required: true
+        nullable: false
+      connector_selection:
+        type: ConnectorSelection
+        required: true
+        nullable: false
+      connector_binding_hash:
+        type: Sha256Hex
+        required: false
+        nullable: true
+      tool_definition_fingerprint:
+        type: Sha256Hex
+        required: false
+        nullable: true
+    rules:
+      nonempty_source_preconditions_requires: connector_profile_id
+      empty_source_preconditions_valid: true
+      revision_contract_ref: spec/action_binding.yaml#revisions
+      selection_contract_ref: spec/action_binding.yaml#connector_selection
+      mcp_contract_ref: spec/action_binding.yaml#mcp
+      duplicate_source_preconditions: reject_exact_tuples
+  Run:
+    fields:
+      id:
+        type: RunId
+        required: true
+        nullable: false
+      version:
+        type: Version
+        required: true
+        nullable: false
+      action_id:
+        type: ActionId
+        required: true
+        nullable: false
+      attempt:
+        type: Attempt
+        required: true
+        nullable: false
+      requested_connector_id:
+        type: ConnectorProfileId
+        required: false
+        nullable: true
+      actual_connector_id:
+        type: ConnectorProfileId
+        required: false
+        nullable: true
+      requested_model_id:
+        type: ModelProfileId
+        required: false
+        nullable: true
+      actual_model_id:
+        type: ModelProfileId
+        required: false
+        nullable: true
+      state:
+        type: RunState
+        required: true
+        nullable: false
+      outcome_certainty:
+        type: OutcomeCertainty
+        required: true
+        nullable: false
+      reconciliation_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      started_at:
+        type: Timestamp
+        required: false
+        nullable: true
+      ended_at:
+        type: Timestamp
+        required: false
+        nullable: true
+      action_version:
+        type: Version
+        required: true
+        nullable: false
+      action_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      approval_id:
+        type: ApprovalId
+        required: true
+        nullable: false
+      approval_version:
+        type: Version
+        required: true
+        nullable: false
+    rules:
+      version_semantics: mutable_record_cas_version_not_attempt_or_action_revision
+      initial_version: 1
+      successful_mutation: expected_version_and_state_then_increment
+      overflow: fail_closed
+      executor_ids_independently_optional: true
+      actual_identity_divergence_requires: explicit_visible_policy_compliant_routing_or_fallback_decision
+      hidden_fallback_allowed: false
+      execution_binding_ref: spec/execution.yaml#run
+      attempt_scope_ref: spec/execution.yaml#attempts
+  Approval:
+    fields:
+      id:
+        type: ApprovalId
+        required: true
+        nullable: false
+      task_id:
+        type: AgentTaskId
+        required: true
+        nullable: false
+      action_id:
+        type: ActionId
+        required: true
+        nullable: false
+      policy_id:
+        type: PolicyId
+        required: true
+        nullable: false
+      state:
+        type: ApprovalState
+        required: true
+        nullable: false
+      requested_at:
+        type: Timestamp
+        required: true
+        nullable: false
+      decided_at:
+        type: Timestamp
+        required: false
+        nullable: true
+      decided_by:
+        type: ActorRef
+        required: false
+        nullable: true
+      decision_note:
+        type: Utf8String
+        required: false
+        nullable: true
+      action_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      version:
+        type: Version
+        required: true
+        nullable: false
+      expires_at:
+        type: Timestamp
+        required: false
+        nullable: true
+      origin_surface:
+        type: SurfaceId
+        required: true
+        nullable: false
+      decided_surface:
+        type: SurfaceId
+        required: false
+        nullable: true
+      action_version:
+        type: Version
+        required: true
+        nullable: false
+      policy_snapshot_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      policy_decision:
+        type: PolicyDecision
+        required: true
+        nullable: false
+      required_assurance:
+        type: ApprovalAssurance
+        required: true
+        nullable: false
+      achieved_assurance:
+        type: ApprovalAssurance
+        required: true
+        nullable: false
+    rules:
+      binding_ref: spec/approval.yaml#record
+      authorization_ref: spec/approval.yaml#execution_authorization
+      cas_ref: spec/approval.yaml#concurrency
+  AuditRecord:
+    fields:
+      audit_id:
+        type: AuditId
+        required: true
+        nullable: false
+      workspace_id:
+        type: WorkspaceId
+        required: true
+        nullable: false
+      sequence:
+        type: AuditSequence
+        required: true
+        nullable: false
+      recorded_at:
+        type: Timestamp
+        required: true
+        nullable: false
+      actor_ref:
+        type: ActorRef
+        required: false
+        nullable: true
+      event_type:
+        type: AuditEventType
+        required: true
+        nullable: false
+      subject_type:
+        type: AuditSubjectType
+        required: true
+        nullable: false
+      subject_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      operation_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      decision_ref:
+        type: OpaqueRef
+        required: false
+        nullable: true
+      metadata_hash:
+        type: Sha256Hex
+        required: false
+        nullable: true
+      prev_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+      record_hash:
+        type: Sha256Hex
+        required: true
+        nullable: false
+    rules_ref: spec/audit.yaml#record

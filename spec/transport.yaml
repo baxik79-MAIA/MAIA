@@ -1,0 +1,59 @@
+schema_version: 1
+principles:
+- single_state_authority_per_workspace
+- channel_service_is_not_a_second_brain
+- no_direct_cloud_sqlite_access
+- outbound_only_local_relay_when_local_authority_is_used
+- authenticated_envelopes
+- at_least_once_delivery_with_idempotency
+topologies:
+  desktop_only:
+    channel_endpoint: none
+    core: local
+    state_authority: sqlite
+    public_inbound_required: false
+  local_with_teams_relay:
+    channel_endpoint: managed_https_agent_service
+    core: local
+    state_authority: sqlite
+    relay: outbound_bidirectional_wss
+    reference: azure_relay_hybrid_connections
+    public_inbound_to_workstation: false
+  enterprise_managed:
+    channel_endpoint: managed_https_agent_service
+    core: managed_headless
+    state_authority: postgresql_reference
+    desktop: thin_client_or_capability_worker
+  hybrid_enterprise:
+    channel_endpoint: managed_https_agent_service
+    core: managed_plus_local_worker
+    state_authority: one_explicit_authority_per_workspace
+    relay: outbound_authenticated_channel
+envelope:
+  required_fields:
+  - envelope_id
+  - workspace_id
+  - task_or_approval_id
+  - kind
+  - actor_id
+  - origin_surface
+  - created_at
+  - expires_at
+  - nonce
+  - payload_hash
+  - payload
+  - auth_context
+  security:
+  - short_lived_auth
+  - replay_guard
+  - workspace_binding
+  - actor_binding
+  - payload_hash_validation
+  - idempotency_key
+  approval_rules:
+  - relay_cannot_mutate_action_payload
+  - approval_decision_still_uses_CAS_in_authoritative_core
+  - stale_relay_message_returns_ExternalConflict
+offline_behavior:
+  local_core_unreachable: channel service may queue bounded envelopes but may not execute local-authority side effects
+  expiry: expired approval/action envelopes fail closed and require refresh

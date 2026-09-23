@@ -1,0 +1,124 @@
+schema_version: 1
+contract:
+  scope: M0.12_claude_code_subscription_provider_vertical_slice
+  boundary: infra_adapter_not_core
+  round_table_position: optional_external_module_ref_ADR_0046
+  execution_authority: forbidden
+  capability_profile: DEVELOPMENT_EVOLUTION
+provider:
+  id: claude-code
+  model_provider: anthropic
+  transport: local_subprocess
+  invocation_mode: non_interactive_print
+  output_format: json
+  shell_invocation: forbidden
+  argument_safe_process_invocation: true
+  prompt_delivery: child_stdin
+  explicit_working_directory_required: true
+  credential_source: local_subscription_session_only
+  api_key_environment_injection: forbidden
+  anthropic_api_key_dependency: forbidden
+  other_provider_fallback: forbidden
+  fabricated_success: forbidden
+  failure_mode: fail_closed
+  timeout_required: true
+  cancellation_supported: true
+environment:
+  inherit: filtered
+  scrubbed_variables:
+  - ANTHROPIC_API_KEY
+  - ANTHROPIC_AUTH_TOKEN
+  - ANTHROPIC_BASE_URL
+  - ANTHROPIC_CUSTOM_HEADERS
+  - ANTHROPIC_MODEL
+  - CLAUDE_CODE_USE_BEDROCK
+  - CLAUDE_CODE_USE_VERTEX
+  - AWS_BEARER_TOKEN_BEDROCK
+  scrub_is_unconditional: true
+  rationale: A present ANTHROPIC_API_KEY would silently move the child process off subscription-backed
+    authentication onto metered API billing and a different credential boundary.
+permission_model:
+  bypass_permissions: forbidden
+  empty_allowlist_is_deny_all: false
+  empty_allowlist_observed_behaviour: tools_remain_available
+  enforcement: explicit_deny_list
+  denied_tools:
+  - Bash
+  - BashOutput
+  - KillShell
+  - Edit
+  - Write
+  - NotebookEdit
+  - WebFetch
+  - WebSearch
+  - Task
+  - SlashCommand
+  read_only_tools_default_denied: true
+  egress_tools_always_denied: true
+recursion_guard:
+  environment_marker: MAIA_CLAUDE_CODE_PROVIDER_ACTIVE
+  nested_invocation: forbidden
+  nested_invocation_detection: marker_present_in_parent_environment
+  failure_is_permanent: true
+capture:
+  required_fields:
+  - stdout
+  - stderr
+  - exit_code
+  - duration_ms
+  - cli_version
+  - correlation_id
+  - session_id
+  raw_response_preserved_for_audit: true
+  cost_invention: forbidden
+  subscription_cost_basis_is_not_actual_spend: true
+contracts:
+  consultation_packet:
+    version: maia.consultation_packet.v1
+    required_fields:
+    - schema_version
+    - consultation_id
+    - participant_id
+    - role
+    - task
+    - context_references
+    - evidence_requirements
+    - constraints
+    - timeout_seconds
+  consultation_result:
+    version: maia.consultation_result.v1
+    required_fields:
+    - schema_version
+    - consultation_id
+    - participant_id
+    - response
+    - findings
+    - evidence
+    - risks
+    - disagreements
+    - recommendation
+    - confidence
+    - execution
+    validated_before_round_table_consumption: true
+    consultation_id_must_match_request: true
+    schema_violation_is_permanent_failure: true
+audit:
+  persistence: local_file_per_consultation
+  raw_response_preserved: true
+  secret_material_logging: forbidden
+  scrubbed_variable_values_logged: false
+  write_failure_is_invocation_failure: true
+deployment_lock:
+  profile_absent_in: DEPLOYMENT_LOCKED
+  mechanism: build_graph_feature_absence_not_runtime_boolean
+  cargo_feature: development-evolution
+  default_enabled: false
+  subprocess_code_compiled_without_feature: false
+  runtime_reenable_by_instance: forbidden
+  core_depends_on_provider: false
+live_smoke:
+  default: skipped
+  explicit_opt_in_environment: MAIA_LIVE_CLAUDE_CODE=1
+  read_only: true
+  canonical_file_mutation: forbidden
+  sensitive_prompt_or_credential_logging: forbidden

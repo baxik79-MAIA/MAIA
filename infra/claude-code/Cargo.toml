@@ -1,0 +1,21 @@
+[package]
+name = "maia-claude-code"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+# `development-evolution` is deliberately NOT a default feature. A DEPLOYMENT_LOCKED
+# build omits this crate entirely; if it is nonetheless present, the subprocess
+# invocation code is not compiled. See spec/claude_code_provider.yaml#deployment_lock
+# and directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md §6.2.
+[features]
+default = []
+development-evolution = []
+
+[dependencies]
+maia-roundtable = { path = "../../roundtable" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+maia-domain = { path = "../../core/domain" }

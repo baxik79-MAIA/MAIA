@@ -1,0 +1,266 @@
+schema_version: 1
+machines:
+  AgentTaskState:
+    states:
+    - draft
+    - preflight
+    - awaiting_approval
+    - queued
+    - running
+    - pausing
+    - paused
+    - partially_completed
+    - completed
+    - canceled
+    - failed
+    transitions:
+      draft:
+      - preflight
+      - canceled
+      preflight:
+      - awaiting_approval
+      - queued
+      - failed
+      - canceled
+      awaiting_approval:
+      - queued
+      - canceled
+      - failed
+      queued:
+      - running
+      - canceled
+      - failed
+      running:
+      - pausing
+      - partially_completed
+      - completed
+      - failed
+      - canceled
+      paused:
+      - queued
+      - canceled
+      partially_completed:
+      - queued
+      - completed
+      - failed
+      - canceled
+      pausing:
+      - paused
+      - partially_completed
+      - completed
+      - failed
+      - canceled
+  ActionState:
+    states:
+    - planned
+    - gated
+    - awaiting_approval
+    - queued
+    - running
+    - reconciling
+    - retryable_error
+    - completed
+    - skipped
+    - failed
+    - canceled
+    transitions:
+      planned:
+      - gated
+      - canceled
+      gated:
+      - awaiting_approval
+      - queued
+      - skipped
+      - failed
+      awaiting_approval:
+      - queued
+      - canceled
+      - failed
+      queued:
+      - running
+      - canceled
+      running:
+      - reconciling
+      - retryable_error
+      - completed
+      - failed
+      - canceled
+      retryable_error:
+      - queued
+      - failed
+      - canceled
+      reconciling:
+      - completed
+      - retryable_error
+      - failed
+      - canceled
+  ApprovalState:
+    states:
+    - not_required
+    - pending
+    - approved
+    - rejected
+    - expired
+    - revoked
+    transitions:
+      pending:
+      - approved
+      - rejected
+      - expired
+      - revoked
+      approved:
+      - revoked
+  CommitmentStatus:
+    states:
+    - candidate
+    - proposed
+    - confirmed
+    - in_progress
+    - fulfilled
+    - overdue
+    - canceled
+    - disputed
+    transitions:
+      candidate:
+      - proposed
+      - confirmed
+      - canceled
+      proposed:
+      - confirmed
+      - canceled
+      - disputed
+      confirmed:
+      - in_progress
+      - fulfilled
+      - overdue
+      - canceled
+      - disputed
+      in_progress:
+      - fulfilled
+      - overdue
+      - canceled
+      - disputed
+      overdue:
+      - fulfilled
+      - canceled
+      - disputed
+  ConnectorHealth:
+    states:
+    - unconfigured
+    - needs_auth
+    - connecting
+    - healthy
+    - degraded
+    - rate_limited
+    - blocked
+    - error
+    transitions:
+      unconfigured:
+      - needs_auth
+      - connecting
+      - blocked
+      needs_auth:
+      - connecting
+      - blocked
+      - error
+      - unconfigured
+      connecting:
+      - healthy
+      - degraded
+      - rate_limited
+      - blocked
+      - error
+      - needs_auth
+      - unconfigured
+      healthy:
+      - degraded
+      - rate_limited
+      - blocked
+      - error
+      - needs_auth
+      - unconfigured
+      degraded:
+      - healthy
+      - connecting
+      - rate_limited
+      - blocked
+      - error
+      - needs_auth
+      - unconfigured
+      rate_limited:
+      - connecting
+      - healthy
+      - degraded
+      - blocked
+      - error
+      - needs_auth
+      - unconfigured
+      blocked:
+      - needs_auth
+      - connecting
+      - error
+      - unconfigured
+      error:
+      - connecting
+      - healthy
+      - degraded
+      - needs_auth
+      - blocked
+      - unconfigured
+    semantics: observed_health_state_with_explicit_allowed_transitions
+  RunState:
+    terminal_states: [retryable_error, completed, failed, canceled]
+    states:
+    - created
+    - starting
+    - running
+    - retryable_error
+    - outcome_unknown
+    - reconciling
+    - completed
+    - failed
+    - canceled
+    transitions:
+      created:
+      - starting
+      - canceled
+      starting:
+      - running
+      - retryable_error
+      - failed
+      - canceled
+      running:
+      - retryable_error
+      - outcome_unknown
+      - completed
+      - failed
+      - canceled
+      outcome_unknown:
+      - reconciling
+      reconciling:
+      - completed
+      - retryable_error
+      - failed
+    semantics: one execution attempt; retryable_error is terminal; retry creates a new RunId; unresolved outcomes
+      require reconciliation
+invalid_transition: return InvalidStateTransition and write audit event; never repair silently
+pause_semantics:
+  model: quiescent_non_preemptive
+  task_transition: running -> pausing -> paused
+  on_pause_request:
+  - stop_scheduling_new_actions_or_runs
+  - request_cancel_only_for_in_flight_runs_whose_contract_is_cancellable
+  - allow_non_cancellable_in_flight_runs_to_reach_terminal_or_outcome_unknown
+  - enter_paused_only_when_no_in_flight_run_remains
+  action_state_paused_is_intentionally_absent: true
+  rationale: A generic Action pause would falsely promise preemption for non-cancellable side effects such as mail.send.
+  in_flight_states:
+  - starting
+  - running
+  - outcome_unknown
+  - reconciling
+  run_scope: all_task_runs_including_superseded_plan_action_revisions
+  after_request_forbidden:
+  - create_run
+  - schedule_run
+  - created_to_starting

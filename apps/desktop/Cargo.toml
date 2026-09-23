@@ -1,0 +1,19 @@
+[package]
+name = "maia-desktop"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+eframe = { version = "0.31.1", default-features = false, features = ["default_fonts", "glow", "x11"] }
+maia-briefing = { path = "../../core/briefing" }
+maia-domain = { path = "../../core/domain" }
+maia-local-intelligence-health = { path = "../../infra/local-intelligence-health" }
+maia-local-model = { path = "../../infra/local-model" }
+maia-sqlite = { path = "../../infra/sqlite" }
+maia-store = { path = "../../core/store" }
+sha2 = "0.10"
+uuid = { version = "1", features = ["v7"] }
+time = { version = "0.3", features = ["formatting"] }
+serde_json = "1"
+image = { version = "0.25.9", default-features = false, features = ["png"] }

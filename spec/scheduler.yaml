@@ -1,0 +1,18 @@
+schema_version: 1
+job_types:
+- time_based
+- recurring
+- condition_watch
+- follow_up_watch
+rules:
+- scheduled_execution_reuses_same_policy_gates_as_interactive_tasks
+- send_external_never_becomes_auto_approved_only_because_job_is_scheduled
+- condition_watch_emits_only_on_state_change_or_threshold
+- jobs_have_owner_timezone
+- missed_run_policy_is_explicit
+examples:
+- daily_priority_brief
+- meeting_prebrief
+- overdue_commitment_check
+- awaited_reply_followup
+- weekly_project_digest

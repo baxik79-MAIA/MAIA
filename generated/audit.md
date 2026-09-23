@@ -1,0 +1,117 @@
+# GENERATED - do not edit
+
+```yaml
+schema_version: 1
+contract: authoritative_workspace_audit
+record:
+  fields:
+    audit_id:
+      type: AuditId
+      required: true
+      nullable: false
+    workspace_id:
+      type: WorkspaceId
+      required: true
+      nullable: false
+    sequence:
+      type: AuditSequence
+      required: true
+      nullable: false
+    recorded_at:
+      type: Timestamp
+      required: true
+      nullable: false
+    actor_ref:
+      type: ActorRef
+      required: false
+      nullable: true
+    event_type:
+      type: AuditEventType
+      required: true
+      nullable: false
+    subject_type:
+      type: AuditSubjectType
+      required: true
+      nullable: false
+    subject_ref:
+      type: OpaqueRef
+      required: false
+      nullable: true
+    operation_ref:
+      type: OpaqueRef
+      required: false
+      nullable: true
+    decision_ref:
+      type: OpaqueRef
+      required: false
+      nullable: true
+    metadata_hash:
+      type: Sha256Hex
+      required: false
+      nullable: true
+    prev_hash:
+      type: Sha256Hex
+      required: true
+      nullable: false
+    record_hash:
+      type: Sha256Hex
+      required: true
+      nullable: false
+  identity:
+  - workspace_id
+  - sequence
+  append_only: true
+  no_hard_delete_in_runtime: true
+  registry_identifiers:
+    event_type: validated_registry_string
+    subject_type: validated_registry_string
+  privacy:
+    default_minimal_facts_only: true
+    forbidden_by_default:
+    - message_body
+    - attachment_bytes
+    - evidence_snapshot_content
+    - source_locator
+    - credentials
+    - access_tokens
+    - full_sensitive_payloads
+    direct_personal_data_minimized_before_append: true
+  erasure_reference_strategy: opaque_or_tombstone_reference
+evidence_snapshot_audit:
+  event_types:
+  - workspace_evidence_imported
+  - workspace_evidence_import_idempotent
+  - workspace_evidence_import_refused
+  success_and_idempotent_subject_type: artifact
+  operation_ref: EvidenceImportRequestId
+  provenance_reference: source_locator_hash_only
+  content_or_raw_locator_in_audit: forbidden
+hash:
+  algorithm: SHA-256
+  canonicalization: RFC8785-JCS
+  projection: AuditRecordV1
+  input_encoding: UTF-8
+  excluded_fields:
+  - record_hash
+  prev_hash_in_projection: true
+  record_hash_must_match_projection: true
+chain:
+  scope: per_workspace
+  sequence:
+    type: unsigned_64
+    starts_at: 1
+    allocated_atomically_by_authoritative_store: true
+    monotonically_increases: true
+    overflow: fail_closed
+  genesis:
+    sequence: 1
+    prev_hash: '0000000000000000000000000000000000000000000000000000000000000000'
+  append: immutable
+invalid_transition:
+  entity_is_unchanged: true
+  refusal_audit_is_allowed: true
+  refusal_audit_atomicity: separate_atomic_append
+authority:
+  one_chain_per_workspace_authority: true
+  append_serialized_with_authority_mutation: true
+```

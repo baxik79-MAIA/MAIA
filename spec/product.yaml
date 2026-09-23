@@ -1,0 +1,67 @@
+schema_version: 1
+product:
+  id: maia
+  name: MAIA
+  expanded_name: Multichannel Automation & Intelligent Assistance
+  version: 1.9.0
+  edition: Trusted Execution Intelligence - M0.10 Local Evidence Briefing
+  snapshot_date: '2026-09-11'
+  promise: A human-governed trusted execution intelligence system that turns signals and context into source-linked
+    commitments, decisions, risks, actions and measurable outcomes across communication, meetings, documents and tools.
+principles:
+- channel_neutral_core
+- mail_is_a_strategic_first_class_domain_but_not_a_transport_lock_in
+- human_is_highest_authority
+- connector_and_model_independence
+- local_first_when_required
+- no_hidden_execution
+- auditable_provenance
+- least_privilege
+- approval_before_material_risk
+- canonical_spec_first
+- future_m365_ready
+- trusted_execution_intelligence
+- signal_to_outcome_continuity
+- outcome_is_distinct_from_run_completion
+- risk_class_is_distinct_from_reasoning_assurance
+- reasoning_assurance_never_grants_execution_permission
+- round_table_is_selective_assurance_escalation
+- measurable_product_advantage
+- narrow_wedge_broad_architecture_global_ambition
+- commercial_readiness_is_governance_not_runtime_fsm
+non_goals:
+- hard_dependency_on_outlook_classic
+- hard_dependency_on_microsoft_graph
+- single_model_lock_in
+- secret_storage_in_sqlite
+- silent_external_send
+- silent_destructive_actions
+- consumer_ai_dom_scraping
+- security_bypass_to_reach_enterprise_data
+- hardcode_initial_wedge_into_core_domain
+- round_table_for_every_request
+- pricing_or_legal_form_logic_in_core_domain
+- unmeasured_competitive_superiority_claims
+- unknown_cost_or_human_effort_treated_as_zero
+value_chain:
+- Signal
+- Context
+- Commitment
+- Decision
+- Risk
+- Plan
+- Action
+- Run
+- Outcome
+validation_hypotheses:
+  initial_wedge:
+    id: microsoft_365_execution_control
+    name: Microsoft 365 Execution Control
+    status: validate_not_assume
+    replaceable: true
+    does_not_define_core: true
+    promise: Detect, organize and drive to completion source-linked commitments, decisions, awaited replies, risks and actions arising from Microsoft 365 communication, meetings and documents.
+    target_contexts:
+    - project_intensive_organizations
+    - service_organizations
+    - technical_organizations

@@ -1,0 +1,9 @@
+[package]
+name = "maia-orchestrator"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+maia-domain = { path = "../domain" }
+maia-policy = { path = "../policy" }

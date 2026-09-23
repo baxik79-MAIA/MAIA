@@ -1,0 +1,10 @@
+[package]
+name = "maia-local-model-roundtable"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[dependencies]
+maia-briefing = { path = "../../core/briefing" }
+maia-local-model = { path = "../local-model" }
+maia-roundtable = { path = "../../roundtable" }
