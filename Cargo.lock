@@ -1566,6 +1566,10 @@ name = "maia-domain"
 version = "0.1.0"
 
 [[package]]
+name = "maia-evolution-supervisor"
+version = "0.1.0"
+
+[[package]]
 name = "maia-executor"
 version = "0.1.0"
 dependencies = [

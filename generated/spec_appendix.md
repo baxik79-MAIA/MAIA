@@ -2872,6 +2872,80 @@ persistence_semantics:
   exhausted_storage_busy: PersistenceError
 ```
 
+## A.evolution_supervisor.yaml
+
+```yaml
+schema_version: 1
+milestone: M0.16.0
+phase: contract_first_non_mutating
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md
+placement:
+  subsystem: development_operations
+  crate: ops/evolution-supervisor
+  core_dependency: forbidden
+  shipped_application_dependency: forbidden
+  hypothesis_ledger_generator_qualification_authority: advisory_only
+trust_boundary:
+  supervisor: outside_evolving_worker_mutable_boundary
+  worker_may_control_supervisor: false
+  worker_may_modify_supervisor_or_kill_switch: false
+  host_isolation_required_before_mutation: true
+  unknown_integrity_or_isolation: halt
+capability_profiles:
+  development_evolution: contract_review_only
+  deployment_locked: supervisor_absent_from_shipped_build_graph
+  runtime_reenable_by_deployed_instance: forbidden
+authority:
+  supervisor_owns:
+  - start_pause_stop
+  - kill_switch
+  - resource_ceilings
+  - snapshot_verification
+  - rollback_baseline
+  - protected_surface_enforcement
+  - candidate_lineage_verification
+  - integrity_heartbeat
+  - failure_backoff
+  - development_lineage_promotion
+  hypothesis_and_qualification_grant_mutation_authority: false
+  worker_may_self_classify_promotion_eligible: false
+preflight:
+  result: advisory_contract_review_only
+  success_grants_mutation_authority: false
+  required_evidence:
+  - development_evolution_profile
+  - supervisor_integrity
+  - host_isolation
+  - kill_switch_operational
+  - positive_evolvable_allowlist
+  - parent_recovery_point
+  - resource_budget_and_recovery_reserve
+  - protected_path_dry_run
+  - declared_operator
+  - declared_blast_radius
+  - hypothesis_evidence_refs
+  unknown_or_missing: reject
+  tier0_required_before_worktree_or_candidate_snapshot: true
+  tier0_complete_in_this_milestone: false
+  candidate_worktree_creation: forbidden
+  candidate_snapshot_creation: forbidden
+  mutation: forbidden
+  promotion: forbidden
+protected_surfaces:
+  unclassified: non_writable
+  worker_may_edit_policy_or_evaluator: false
+  worker_may_edit_resource_hard_ceiling: false
+  evolvable_allowlist: []
+kill_switch:
+  unreadable_or_unknown: halt
+  worker_may_reset: false
+  emergency_result: HALTED
+release_boundary:
+  development_promotion_is_release: false
+  release_authority: external_human_controlled
+  locked_artifact_can_reenable_evolution: false
+```
+
 ## A.execution.yaml
 
 ```yaml

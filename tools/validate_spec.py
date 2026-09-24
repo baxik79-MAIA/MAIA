@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+from evolution_supervisor_contract import validate as validate_evolution_supervisor
 import sys, yaml, subprocess, shutil
 ROOT=Path(__file__).resolve().parents[1]
 SPEC=ROOT/'spec'
@@ -1644,6 +1645,8 @@ if m013_ids != {f'D{i:03d}' for i in range(1, 15)}:
 ids=[]
 for stage,items in loaded['acceptance.yaml']['releases'].items(): ids += [x['id'] for x in items]
 if len(ids)!=len(set(ids)): errors.append('acceptance.yaml: duplicate acceptance id')
+
+errors.extend(validate_evolution_supervisor(loaded.get('evolution_supervisor.yaml')))
 
 if errors:
     print('SPEC GUARD FAILED')

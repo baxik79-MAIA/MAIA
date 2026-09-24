@@ -194,6 +194,11 @@ const OTHER: &[(&str, &str)] = &[
         "maia-roundtable-invoke",
         include_str!("../../ops/roundtable-invoke/Cargo.toml"),
     ),
+    // M0.16.0: contract-only development operations, never a shipped app.
+    (
+        "maia-evolution-supervisor",
+        include_str!("../../ops/evolution-supervisor/Cargo.toml"),
+    ),
 ];
 
 const WORKSPACE_MANIFEST: &str = include_str!("../../Cargo.toml");
