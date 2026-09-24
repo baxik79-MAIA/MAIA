@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 
 const OWN_MANIFEST: &str = include_str!("../Cargo.toml");
 const OWN_SOURCE: &str = include_str!("../src/lib.rs");
+const TIER0_SOURCE: &str = include_str!("../src/tier0.rs");
 
 #[test]
 fn no_product_or_advisory_crate_depends_on_supervisor() {
@@ -44,7 +45,7 @@ fn contract_crate_has_no_side_effect_dependencies_or_binary() {
         "rusqlite::",
     ] {
         assert!(
-            !OWN_SOURCE.contains(forbidden),
+            !OWN_SOURCE.contains(forbidden) && !TIER0_SOURCE.contains(forbidden),
             "contract crate gained side-effect API {forbidden}"
         );
     }

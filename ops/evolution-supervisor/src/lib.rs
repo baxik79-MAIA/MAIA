@@ -5,7 +5,7 @@
 //! snapshot, worktree, promotion, rollback, or release authority. In
 //! particular, a diagnostic hypothesis or qualification is only advisory.
 //! A future host must independently verify facts under a separate OS trust
-//! boundary before implementing the v5.1 Tier 0 and worker lifecycle.
+//! boundary before protected host adapters or a worker lifecycle are wired.
 #![forbid(unsafe_code)]
 
 /// A fact supplied for contract review. Unknown is never treated as success.
@@ -91,3 +91,5 @@ pub fn review(facts: ReviewFacts) -> ReviewVerdict {
     }
     V::Rejected(R::MutationUnavailable)
 }
+
+pub mod tier0;
