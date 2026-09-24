@@ -51,7 +51,7 @@ pub struct Decision {
 }
 
 /// A plan is descriptive input, never a permission or a path to write.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     pub generation_id: String,
     pub hypothesis_id: String,
