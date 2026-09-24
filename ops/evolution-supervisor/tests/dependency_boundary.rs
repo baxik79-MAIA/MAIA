@@ -14,7 +14,17 @@ fn no_product_or_advisory_crate_depends_on_supervisor() {
         .unwrap();
     for area in ["core", "infra", "composition", "apps", "roundtable"] {
         let directory = root.join(area);
-        for entry in fs::read_dir(directory).unwrap() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && matches!(area, "composition" | "roundtable") =>
+            {
+                continue;
+            }
+            Err(error) => panic!("cannot inspect {}: {error}", directory.display()),
+        };
+        for entry in entries {
             let entry = entry.unwrap();
             let manifest = entry.path().join("Cargo.toml");
             if manifest.is_file() {
@@ -31,11 +41,9 @@ fn no_product_or_advisory_crate_depends_on_supervisor() {
 
 #[test]
 fn contract_crate_has_no_side_effect_dependencies_or_binary() {
-    assert!(OWN_MANIFEST.contains("[dependencies]\n"));
+    assert!(empty_dependencies(OWN_MANIFEST));
     assert!(!OWN_MANIFEST.contains("[[bin]]"));
     assert!(!OWN_MANIFEST.contains("required-features"));
-    let dependencies = OWN_MANIFEST.split("[dependencies]").nth(1).unwrap();
-    assert!(dependencies.trim().is_empty());
     for forbidden in [
         "std::process::",
         "std::fs::",
@@ -49,4 +57,24 @@ fn contract_crate_has_no_side_effect_dependencies_or_binary() {
             "contract crate gained side-effect API {forbidden}"
         );
     }
+}
+
+fn empty_dependencies(manifest: &str) -> bool {
+    let lines: Vec<_> = manifest.lines().map(str::trim).collect();
+    let Some(section) = lines.iter().position(|line| *line == "[dependencies]") else {
+        return false;
+    };
+    lines[section + 1..].iter().all(|line| line.is_empty())
+}
+
+#[test]
+fn dependency_section_check_accepts_lf_and_crlf_but_not_dependencies() {
+    assert!(empty_dependencies(
+        "[package]\nname = \"x\"\n[dependencies]\n"
+    ));
+    assert!(empty_dependencies(
+        "[package]\r\nname = \"x\"\r\n[dependencies]\r\n"
+    ));
+    assert!(!empty_dependencies("[dependencies]\nserde = \"1\"\n"));
+    assert!(!empty_dependencies("[package]\nname = \"x\"\n"));
 }

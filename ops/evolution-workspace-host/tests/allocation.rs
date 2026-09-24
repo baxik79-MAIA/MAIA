@@ -329,7 +329,18 @@ fn host_adapter_is_absent_from_core_and_shipped_apps() {
         .parent()
         .unwrap();
     for area in ["core", "infra", "composition", "apps", "roundtable"] {
-        for entry in fs::read_dir(root.join(area)).unwrap() {
+        let directory = root.join(area);
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && matches!(area, "composition" | "roundtable") =>
+            {
+                continue;
+            }
+            Err(error) => panic!("cannot inspect {}: {error}", directory.display()),
+        };
+        for entry in entries {
             let manifest = entry.unwrap().path().join("Cargo.toml");
             if manifest.is_file() {
                 let text = fs::read_to_string(&manifest).unwrap();
