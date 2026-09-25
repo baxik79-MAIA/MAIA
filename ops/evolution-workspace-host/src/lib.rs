@@ -107,6 +107,15 @@ fn changed_line_count(before: &str, after: &str) -> Result<u32, PortFailure> {
         .map_err(|_| PortFailure::Rejected)
 }
 
+fn normalize_newlines(value: &str) -> Result<(String, bool), PortFailure> {
+    let has_crlf = value.contains("\r\n");
+    let without_crlf = value.replace("\r\n", "");
+    if without_crlf.contains('\r') || (has_crlf && without_crlf.contains('\n')) {
+        return Err(PortFailure::Rejected);
+    }
+    Ok((value.replace("\r\n", "\n"), has_crlf))
+}
+
 impl<G: Gate, E: Evidence> GitWorkspaceHost<G, E, FixedCargoTier1Verifier> {
     pub fn new(
         repository: &Path,
@@ -396,17 +405,25 @@ impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<
             return Err(PortFailure::Rejected);
         }
         let text = std::str::from_utf8(&before).map_err(|_| PortFailure::Rejected)?;
-        if text.matches(&request.expected_text).count() != 1 {
+        let (normalized_text, preserve_crlf) = normalize_newlines(text)?;
+        let (expected_text, _) = normalize_newlines(&request.expected_text)?;
+        let (replacement_text, _) = normalize_newlines(&request.replacement_text)?;
+        if normalized_text.matches(&expected_text).count() != 1 {
             return Err(PortFailure::Rejected);
         }
-        let changed_lines = changed_line_count(&request.expected_text, &request.replacement_text)?;
+        let changed_lines = changed_line_count(&expected_text, &replacement_text)?;
         if changed_lines == 0
             || changed_lines > identity.max_changed_lines
             || identity.max_files < 1
         {
             return Err(PortFailure::Rejected);
         }
-        let replacement = text.replacen(&request.expected_text, &request.replacement_text, 1);
+        let replacement = normalized_text.replacen(&expected_text, &replacement_text, 1);
+        let replacement = if preserve_crlf {
+            replacement.replace('\n', "\r\n")
+        } else {
+            replacement
+        };
         let after = replacement.as_bytes();
         let after_digest = format!("{:x}", Sha256::digest(after));
         // Re-resolve immediately before opening. Candidate workspaces are only

@@ -125,7 +125,10 @@ impl Tier1Verifier for ScriptedTier1 {
         let changed =
             fs::read_to_string(candidate_workspace.join("apps/local-intelligence-host/src/lib.rs"))
                 .map_err(|_| PortFailure::Infrastructure)?;
-        if !changed.contains("marker() -> u8 {\n    2\n}") {
+        if !changed
+            .replace("\r\n", "\n")
+            .contains("marker() -> u8 {\n    2\n}")
+        {
             return Ok(tier1_report(Tier1Outcome::Failed));
         }
         Ok(tier1_report(self.0))
@@ -193,6 +196,11 @@ fn mutation_request(fixture: &Fixture, id: &str) -> MutationRequest {
         operation: Operation::FunctionRewrite,
     }
 }
+
+fn read_candidate_text(path: &Path) -> String {
+    fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+}
+
 struct Fixture {
     base: PathBuf,
     repo: PathBuf,
@@ -211,6 +219,7 @@ impl Fixture {
         fs::create_dir_all(&repo).unwrap();
         fs::create_dir_all(&root).unwrap();
         run(&repo, &["init"]);
+        run(&repo, &["config", "core.autocrlf", "true"]);
         run(&repo, &["config", "user.name", "Synthetic Test"]);
         run(
             &repo,
@@ -562,6 +571,13 @@ fn allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline(
     let mut sibling = allocate(&sibling_request, &mut host).unwrap();
     candidate.activate(&mut host).unwrap();
     sibling.activate(&mut host).unwrap();
+    let checkout_bytes = fs::read(
+        fixture
+            .root
+            .join("allowed/apps/local-intelligence-host/src/lib.rs"),
+    )
+    .unwrap();
+    assert!(checkout_bytes.windows(2).any(|bytes| bytes == b"\r\n"));
     let result = mutate_and_verify(
         &mut candidate,
         &tier0,
@@ -571,12 +587,11 @@ fn allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline(
     assert_eq!(result.state, ResultState::Tier1Passed, "result={result:?}");
     assert_eq!(candidate.state(), State::Active);
     assert_eq!(
-        fs::read_to_string(
-            fixture
+        read_candidate_text(
+            &fixture
                 .root
-                .join("allowed/apps/local-intelligence-host/src/lib.rs")
-        )
-        .unwrap(),
+                .join("allowed/apps/local-intelligence-host/src/lib.rs"),
+        ),
         "pub fn marker() -> u8 {\n    2\n}\n"
     );
     assert_eq!(
@@ -584,12 +599,11 @@ fn allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline(
         "pub fn marker() -> u8 {\n    1\n}\n"
     );
     assert_eq!(
-        fs::read_to_string(
-            fixture
+        read_candidate_text(
+            &fixture
                 .root
-                .join("sibling/apps/local-intelligence-host/src/lib.rs")
-        )
-        .unwrap(),
+                .join("sibling/apps/local-intelligence-host/src/lib.rs"),
+        ),
         "pub fn marker() -> u8 {\n    1\n}\n"
     );
     assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);

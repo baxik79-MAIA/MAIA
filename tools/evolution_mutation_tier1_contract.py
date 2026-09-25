@@ -30,6 +30,7 @@ EXPECTED = {
         "exact_candidate_and_workspace_identity_required": True,
         "operation": "unique_expected_text_replacement",
         "expected_file_digest_required": True,
+        "line_endings": "normalize_for_match_and_preserve_candidate_style",
         "max_replacement_bytes": 65536,
         "actual_blast_radius_rechecked": True,
         "path_resolution": "canonical_candidate_workspace_relative",

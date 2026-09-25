@@ -22,6 +22,7 @@ The user-required human approval is represented by an approval reference and rev
 
 - Positive EVOLVABLE allowlist: only `apps/local-intelligence-host/src/lib.rs` with operator `FUNCTION_REWRITE`.
 - The operation is one unique expected-text replacement, bound to the current file SHA-256, with a 64 KiB replacement bound. It cannot create, delete, rename, or select arbitrary files.
+- Patch comparison normalizes LF/CRLF and preserves the candidate file's consistent newline style. Mixed or lone carriage-return files fail closed.
 - Mutation requires an ACTIVE candidate, its exact workspace/generation/hypothesis identity, exact admitted Tier-0 evidence, current protected-host approval, the DEVELOPMENT_EVOLUTION profile, and a healthy Supervisor gate.
 - Paths must be candidate-relative normal components. Absolute paths, traversal, symlinks, canonical-host aliases, and hardlinks to the canonical file or another candidate are refused.
 - Before mutation and after Tier-1, the host verifies that the workspace is still the allocated Git worktree at the admitted parent commit, and that canonical HEAD and canonical tracked/untracked status still match the admitted clean parent.
@@ -60,7 +61,7 @@ Every attempt is recorded before policy execution and updated at material transi
 - `python tools/verify_round_table_absent.py`: **PASS**; 341 packages resolved, workspace build and tests passed with all nine Round Table members physically removed.
 - `git diff --check`: **PASS**.
 - Provider-dependent tests remained opt-in/ignored where credentials or a local Ollama service are required; no provider calls were made for this milestone.
-- Initial GitHub Actions run `36125313264` exposed a Windows candidate-root revalidation failure: allocation/mutation integration cases returned `REJECTED` under the runner's temporary workspace paths. Candidate-root validation now compares filesystem identity with `same-file` instead of comparing canonical path strings. The follow-up remote workflow is pending.
+- GitHub Actions runs `36125313264` and `36127462534` exposed Windows mutation attempts rejected before file-write or Tier-1 evidence. The diagnostic run `36128951721` confirmed `MutationRejected` with no changed-file/Tier-1 evidence. A synthetic repository with `core.autocrlf=true` reproduced the cause: candidate worktree source was CRLF while the approved patch text used LF. The adapter now normalizes for matching and preserves the candidate style; the synthetic test asserts CRLF is present and the rewrite succeeds. Remote validation of this correction is pending.
 
 ## Deliberate non-goals
 
