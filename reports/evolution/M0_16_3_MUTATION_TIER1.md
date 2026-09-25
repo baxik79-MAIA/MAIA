@@ -2,7 +2,7 @@
 
 ## Status
 
-Local implementation and required local validation: **PASS**. Remote GitHub Actions: **PASS**. M0.16.3: **ACCEPTED / CLOSED_READY**, subject to the final report commit's workflow completion on the pushed branch.
+Local implementation and required local validation: **PASS**. Remote GitHub Actions: **PASS**. M0.16.3: **ACCEPTED / CLOSED_READY**. The final report commit is documentation-only and will receive the ordinary branch workflow validation.
 
 ## Revision
 
@@ -10,6 +10,7 @@ Local implementation and required local validation: **PASS**. Remote GitHub Acti
 - Branch: `codex/m0163-mutation-tier1`
 - Implementation validation commit: `5a2ecf3c1839e4d94911872a1fedd37aec8dade9`
 - Successful GitHub Actions run: `36134017439` (`windows-validation`, SUCCESS).
+- Final implementation plus acceptance-report workflow: `36148827618` (`windows-validation`, SUCCESS) on `d9a78f40732d72071540cfc59b94d572c4b376b6`.
 - Parent architecture: M0.16.0 Supervisor policy remains in `ops/evolution-supervisor`; host filesystem and Git mechanics remain in `ops/evolution-workspace-host`.
 
 ## Architecture decision
