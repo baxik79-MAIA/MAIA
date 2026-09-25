@@ -92,5 +92,6 @@ pub fn review(facts: ReviewFacts) -> ReviewVerdict {
     V::Rejected(R::MutationUnavailable)
 }
 
+pub mod mutation;
 pub mod tier0;
 pub mod workspace;

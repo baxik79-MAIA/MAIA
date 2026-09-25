@@ -1574,6 +1574,9 @@ name = "maia-evolution-workspace-host"
 version = "0.1.0"
 dependencies = [
  "maia-evolution-supervisor",
+ "same-file",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

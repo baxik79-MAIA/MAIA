@@ -1,0 +1,102 @@
+"""Canonical M0.16.3 mutation and Tier 1 safety contract guard."""
+
+EXPECTED = {
+    "schema_version": 1,
+    "milestone": "M0.16.3",
+    "authority": "docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md#3.0.2",
+    "placement": {
+        "policy": "ops/evolution-supervisor",
+        "host_mutation_and_verification_adapter": "ops/evolution-workspace-host",
+        "core_dependency": "forbidden",
+        "shipped_application_dependency": "forbidden",
+    },
+    "human_governance": {
+        "improvement_must_be_human_approved_before_mutation": True,
+        "approval_reference_required": True,
+        "approval_verified_by_protected_host": True,
+        "supervisor_and_kill_switch_outside_candidate_boundary": True,
+    },
+    "evolvable_surface": {
+        "authority_model": "positive_exact_path_allowlist",
+        "paths": ["apps/local-intelligence-host/src/lib.rs"],
+        "operators": ["FUNCTION_REWRITE"],
+        "absent_or_unclassified": "deny",
+        "create_delete_rename": "forbidden",
+        "tests_manifests_tooling_specs_governance_and_evaluators": "protected",
+    },
+    "mutation": {
+        "candidate_state_required": "ACTIVE",
+        "tier0_outcome_required": "ADMITTED",
+        "exact_candidate_and_workspace_identity_required": True,
+        "operation": "unique_expected_text_replacement",
+        "expected_file_digest_required": True,
+        "max_replacement_bytes": 65536,
+        "actual_blast_radius_rechecked": True,
+        "path_resolution": "canonical_candidate_workspace_relative",
+        "traversal_absolute_paths_symlinks_and_escape": "reject",
+        "canonical_host_or_protected_state_target": "reject",
+        "git_authority": "none",
+    },
+    "tier1": {
+        "mandatory_checks": [
+            "post_mutation_candidate_identity",
+            "syntax_static_validation",
+            "formatting_and_lint",
+            "touched_component_build",
+            "targeted_unit_and_contract_tests",
+            "protected_surface_integrity",
+        ],
+        "candidate_supplied_commands": "forbidden",
+        "adapter_failure_or_timeout": "INFRA_ERROR",
+        "missing_or_ambiguous_evidence": "fail_closed",
+        "success_grants_promotion": False,
+    },
+    "evidence": {
+        "durable_queryable_attempt_record_required": True,
+        "fields": [
+            "candidate_id", "workspace_id", "generation_id", "hypothesis_id",
+            "tier0_outcome_and_evidence_refs", "approval_reference",
+            "requested_path_and_operation", "mutation_outcome_and_reason",
+            "changed_file_paths_and_digests",
+            "tier1_check_results_and_verifier_identity",
+            "terminal_candidate_state_and_reason",
+        ],
+        "raw_replacement_content": "forbidden",
+        "credentials_prompts_and_secrets": "forbidden",
+    },
+    "state": {
+        "tier0_failure": "discard_candidate_without_tier1",
+        "tier1_failure": "REJECTED_then_discard_candidate",
+        "tier1_infrastructure_failure": "INFRA_ERROR_then_discard_candidate",
+        "tier1_success": "remain_active_without_promotion",
+        "rollback_baseline_implied": False,
+    },
+    "authority_limits": {
+        "canonical_host_mutation": "forbidden",
+        "supervisor_or_kill_switch_mutation": "forbidden",
+        "git_commit_push_merge_or_protected_ref_change": "forbidden",
+        "deployment_locked_mutation": "forbidden",
+        "release_or_promotion_authority": "forbidden",
+        "arbitrary_subprocess": "forbidden",
+        "only_fixed_deterministic_tier1_adapter": "allowed",
+    },
+}
+
+
+def validate(spec):
+    errors = []
+
+    def check(actual, expected, path):
+        if isinstance(expected, dict):
+            if not isinstance(actual, dict):
+                errors.append(f"evolution_mutation_tier1.yaml:{path}: mapping required")
+                return
+            for key, value in expected.items():
+                check(actual.get(key), value, f"{path}.{key}" if path else key)
+        elif type(actual) is not type(expected) or actual != expected:
+            errors.append(
+                f"evolution_mutation_tier1.yaml:{path}: expected {expected!r}, got {actual!r}"
+            )
+
+    check(spec, EXPECTED, "")
+    return errors

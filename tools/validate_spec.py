@@ -3,6 +3,7 @@ from pathlib import Path
 from evolution_supervisor_contract import validate as validate_evolution_supervisor
 from evolution_tier0_contract import validate as validate_evolution_tier0
 from evolution_workspace_contract import validate as validate_evolution_workspace
+from evolution_mutation_tier1_contract import validate as validate_evolution_mutation_tier1
 import sys, yaml, subprocess, shutil
 ROOT=Path(__file__).resolve().parents[1]
 SPEC=ROOT/'spec'
@@ -1651,6 +1652,7 @@ if len(ids)!=len(set(ids)): errors.append('acceptance.yaml: duplicate acceptance
 errors.extend(validate_evolution_supervisor(loaded.get('evolution_supervisor.yaml')))
 errors.extend(validate_evolution_tier0(loaded.get('evolution_tier0.yaml')))
 errors.extend(validate_evolution_workspace(loaded.get('evolution_workspace.yaml')))
+errors.extend(validate_evolution_mutation_tier1(loaded.get('evolution_mutation_tier1.yaml')))
 
 if errors:
     print('SPEC GUARD FAILED')
