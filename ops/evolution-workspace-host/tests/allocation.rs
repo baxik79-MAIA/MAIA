@@ -568,7 +568,7 @@ fn allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline(
         &mutation_request(&fixture, "allowed"),
         &mut host,
     );
-    assert_eq!(result.state, ResultState::Tier1Passed);
+    assert_eq!(result.state, ResultState::Tier1Passed, "result={result:?}");
     assert_eq!(candidate.state(), State::Active);
     assert_eq!(
         fs::read_to_string(
@@ -725,7 +725,9 @@ fn tier1_failure_and_infrastructure_error_discard_candidate_without_rollback() {
                 ResultState::Rejected
             } else {
                 ResultState::InfraError
-            }
+            },
+            "outcome={outcome:?}; result={result:?}; attempt={:?}",
+            host.evidence().attempts.last()
         );
         assert_eq!(candidate.state(), State::Closed);
         assert_eq!(
@@ -792,7 +794,12 @@ fn incomplete_tier1_evidence_fails_closed_and_discards_candidate() {
         &mutation_request(&fixture, "incomplete-tier1"),
         &mut host,
     );
-    assert_eq!(result.state, ResultState::InfraError);
+    assert_eq!(
+        result.state,
+        ResultState::InfraError,
+        "result={result:?}; attempt={:?}",
+        host.evidence().attempts.last()
+    );
     assert_eq!(candidate.state(), State::Closed);
     assert_eq!(candidate.outcome(), Some(TerminalOutcome::InfraError));
     assert!(!fixture.root.join("incomplete-tier1").exists());
@@ -817,7 +824,7 @@ fn durable_evidence_is_queryable_hash_chained_and_disjoint_from_candidate_and_ho
         &mutation_request(&fixture, "durable"),
         &mut host,
     );
-    assert_eq!(result.state, ResultState::Tier1Passed);
+    assert_eq!(result.state, ResultState::Tier1Passed, "result={result:?}");
     drop(candidate);
     drop(host);
 
