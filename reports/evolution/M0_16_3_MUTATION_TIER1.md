@@ -60,6 +60,7 @@ Every attempt is recorded before policy execution and updated at material transi
 - `python tools/verify_round_table_absent.py`: **PASS**; 341 packages resolved, workspace build and tests passed with all nine Round Table members physically removed.
 - `git diff --check`: **PASS**.
 - Provider-dependent tests remained opt-in/ignored where credentials or a local Ollama service are required; no provider calls were made for this milestone.
+- Initial GitHub Actions run `36125313264` exposed a Windows candidate-root revalidation failure: allocation/mutation integration cases returned `REJECTED` under the runner's temporary workspace paths. Candidate-root validation now compares filesystem identity with `same-file` instead of comparing canonical path strings. The follow-up remote workflow is pending.
 
 ## Deliberate non-goals
 

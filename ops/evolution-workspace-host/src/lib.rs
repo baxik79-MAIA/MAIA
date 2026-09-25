@@ -197,7 +197,9 @@ impl<G: Gate, E: Evidence, V> GitWorkspaceHost<G, E, V> {
             fs::canonicalize(candidate_top.trim()).map_err(|_| PortFailure::ProtectedTarget)?;
         let candidate_head =
             git(&canonical, &["rev-parse", "HEAD"]).map_err(|_| PortFailure::Infrastructure)?;
-        if candidate_top != canonical || candidate_head.trim() != identity.parent_source_commit {
+        let same_worktree_root = same_file::is_same_file(&candidate_top, &canonical)
+            .map_err(|_| PortFailure::ProtectedTarget)?;
+        if !same_worktree_root || candidate_head.trim() != identity.parent_source_commit {
             return Err(PortFailure::ProtectedTarget);
         }
         let parent = git(&self.repository, &["rev-parse", "HEAD"])
