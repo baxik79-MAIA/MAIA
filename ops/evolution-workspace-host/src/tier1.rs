@@ -16,48 +16,54 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 #[cfg(windows)]
 fn local_msvc_paths() -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
     use std::path::PathBuf;
-    let Some(program_files) = std::env::var_os("ProgramFiles(x86)") else {
-        return (Vec::new(), Vec::new());
-    };
-    let root = PathBuf::from(program_files);
     let mut bins = Vec::new();
     let mut libs = Vec::new();
-    let visual_studio = root.join("Microsoft Visual Studio");
-    if let Ok(years) = std::fs::read_dir(visual_studio) {
-        for year in years.flatten() {
-            if let Ok(editions) = std::fs::read_dir(year.path()) {
-                for edition in editions.flatten() {
-                    let msvc = edition.path().join("VC/Tools/MSVC");
-                    if let Ok(versions) = std::fs::read_dir(msvc) {
-                        for version in versions.flatten() {
-                            let base = version.path();
-                            let bin = base.join("bin/Hostx64/x64");
-                            let lib = base.join("lib/x64");
-                            if bin.join("link.exe").is_file() && lib.is_dir() {
-                                bins.push(bin);
-                                libs.push(lib);
+    let roots: Vec<_> = ["ProgramFiles", "ProgramFiles(x86)"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(PathBuf::from)
+        .collect();
+    for root in roots {
+        let visual_studio = root.join("Microsoft Visual Studio");
+        if let Ok(years) = std::fs::read_dir(visual_studio) {
+            for year in years.flatten() {
+                if let Ok(editions) = std::fs::read_dir(year.path()) {
+                    for edition in editions.flatten() {
+                        let msvc = edition.path().join("VC/Tools/MSVC");
+                        if let Ok(versions) = std::fs::read_dir(msvc) {
+                            for version in versions.flatten() {
+                                let base = version.path();
+                                let bin = base.join("bin/Hostx64/x64");
+                                let lib = base.join("lib/x64");
+                                if bin.join("link.exe").is_file() && lib.is_dir() {
+                                    bins.push(bin);
+                                    libs.push(lib);
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
-    let sdk = root.join("Windows Kits/10/Lib");
-    if let Ok(versions) = std::fs::read_dir(sdk) {
-        let mut version_paths: Vec<_> = versions.flatten().map(|entry| entry.path()).collect();
-        version_paths.sort();
-        for version in version_paths.into_iter().rev() {
-            for component in ["ucrt/x64", "um/x64"] {
-                let lib = version.join(component);
-                if lib.is_dir() {
-                    libs.push(lib);
+        let sdk = root.join("Windows Kits/10/Lib");
+        if let Ok(versions) = std::fs::read_dir(sdk) {
+            let mut version_paths: Vec<_> = versions.flatten().map(|entry| entry.path()).collect();
+            version_paths.sort();
+            for version in version_paths.into_iter().rev() {
+                for component in ["ucrt/x64", "um/x64"] {
+                    let lib = version.join(component);
+                    if lib.is_dir() {
+                        libs.push(lib);
+                    }
                 }
             }
         }
     }
     bins.sort();
     bins.reverse();
+    bins.dedup();
+    libs.sort();
+    libs.dedup();
     (bins, libs)
 }
 
@@ -83,6 +89,7 @@ fn command_env(command: &mut Command, target: &Path) {
         "HOME",
         "HOMEDRIVE",
         "HOMEPATH",
+        "LIB",
     ] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
