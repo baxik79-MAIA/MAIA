@@ -609,33 +609,88 @@ pub use windows_job::run as run_contained;
 mod tests {
     use super::windows_job::run_process;
     use super::{Completion, ContainmentUnavailable};
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::windows::io::IntoRawHandle;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::Mutex;
     use std::time::Duration;
-    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, WaitForSingleObject,
     };
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    fn powershell() -> PathBuf {
-        PathBuf::from(std::env::var_os("SystemRoot").expect("Windows SystemRoot"))
-            .join("System32/WindowsPowerShell/v1.0/powershell.exe")
+    const HELPER_MODE: &str = "MAIA_CONTAINED_TEST_MODE";
+    const HELPER_PID_FILE: &str = "MAIA_CONTAINED_TEST_PID_FILE";
+
+    /// The same test binary supplies tiny child and grandchild processes. This
+    /// keeps the OS containment tests independent of shell startup and quoting.
+    #[test]
+    fn contained_process_tree_helper() {
+        let Ok(mode) = std::env::var(HELPER_MODE) else {
+            return;
+        };
+        if mode == "grandchild" || mode == "sleep" {
+            loop {
+                std::thread::sleep(Duration::from_secs(30));
+            }
+        }
+        if mode == "exit" {
+            return;
+        }
+        if matches!(mode.as_str(), "spawn-and-sleep" | "spawn-and-exit") {
+            let pid_file = std::env::var_os(HELPER_PID_FILE).expect("helper pid path");
+            let child = Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "tests::contained_process_tree_helper",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(HELPER_MODE, "grandchild")
+                .spawn()
+                .expect("spawn contained grandchild");
+            fs::write(pid_file, child.id().to_string()).expect("write grandchild pid");
+            let child_handle = child.into_raw_handle();
+            assert_ne!(unsafe { CloseHandle(child_handle.cast()) }, 0);
+            if mode == "spawn-and-exit" {
+                return;
+            }
+            loop {
+                std::thread::sleep(Duration::from_secs(30));
+            }
+        }
+        panic!("unknown containment helper mode: {mode}");
     }
 
-    fn run_script(
-        script: &str,
+    fn run_helper(
+        mode: &str,
+        pid_file: Option<&Path>,
         timeout: Duration,
         cancelled: impl FnMut() -> bool,
     ) -> Result<Completion, ContainmentUnavailable> {
-        let environment = ["PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"]
+        let mut environment = ["PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"]
             .into_iter()
             .filter_map(|key| std::env::var_os(key).map(|value| (key.into(), value)))
             .collect::<Vec<_>>();
+        environment.push((OsString::from(HELPER_MODE), OsString::from(mode)));
+        if let Some(pid_file) = pid_file {
+            environment.push((
+                OsString::from(HELPER_PID_FILE),
+                pid_file.as_os_str().to_owned(),
+            ));
+        }
         run_process(
-            &powershell(),
-            &["-NoProfile".into(), "-Command".into(), script.into()],
+            &std::env::current_exe().expect("test executable"),
+            &[
+                "--exact".into(),
+                "tests::contained_process_tree_helper".into(),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
             &std::env::temp_dir(),
             &environment,
             timeout,
@@ -643,21 +698,15 @@ mod tests {
         )
     }
 
-    fn child_script() -> (String, PathBuf) {
-        let id_file = std::env::temp_dir().join(format!(
+    fn child_pid_file() -> PathBuf {
+        std::env::temp_dir().join(format!(
             "maia-job-child-{}-{}.txt",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("clock")
                 .as_nanos()
-        ));
-        let escaped = id_file.to_string_lossy().replace("'", "''");
-        let child_exe = powershell().to_string_lossy().replace("'", "''");
-        let script = format!(
-            "$child = Start-Process -FilePath '{child_exe}' -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') -PassThru; Set-Content -LiteralPath '{escaped}' -Value $child.Id; Start-Sleep -Seconds 30"
-        );
-        (script, id_file)
+        ))
     }
 
     fn assert_process_ended(id_file: &Path) {
@@ -670,6 +719,11 @@ mod tests {
         let process =
             unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | 0x0010_0000, 0, child_id) };
         if process.is_null() {
+            assert_eq!(
+                unsafe { GetLastError() },
+                windows_sys::Win32::Foundation::ERROR_INVALID_PARAMETER,
+                "grandchild process lookup failed for a reason other than process termination"
+            );
             return;
         }
         let ended = unsafe { WaitForSingleObject(process, 5_000) } == WAIT_OBJECT_0;
@@ -682,9 +736,15 @@ mod tests {
         let _guard = TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (script, id_file) = child_script();
+        let id_file = child_pid_file();
         assert_eq!(
-            run_script(&script, Duration::from_secs(5), || false).expect("containment"),
+            run_helper(
+                "spawn-and-sleep",
+                Some(&id_file),
+                Duration::from_secs(5),
+                || false,
+            )
+            .expect("containment"),
             Completion::TimedOut
         );
         assert_process_ended(&id_file);
@@ -695,9 +755,15 @@ mod tests {
         let _guard = TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (script, id_file) = child_script();
+        let id_file = child_pid_file();
         assert_eq!(
-            run_script(&script, Duration::from_secs(10), || id_file.exists()).expect("containment"),
+            run_helper(
+                "spawn-and-sleep",
+                Some(&id_file),
+                Duration::from_secs(15),
+                || id_file.exists(),
+            )
+            .expect("containment"),
             Completion::Cancelled
         );
         assert_process_ended(&id_file);
@@ -738,7 +804,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(
-            run_script("exit 0", Duration::from_secs(10), || true).expect("containment"),
+            run_helper("exit", None, Duration::from_secs(10), || true).expect("containment"),
             Completion::Cancelled
         );
     }
@@ -749,12 +815,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(
-            run_script(
-                "Start-Sleep -Seconds 30",
-                Duration::from_millis(100),
-                || false
-            )
-            .expect("containment"),
+            run_helper("sleep", None, Duration::from_millis(100), || false).expect("containment"),
             Completion::TimedOut
         );
     }
@@ -766,7 +827,7 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut checks = 0;
         assert_eq!(
-            run_script("Start-Sleep -Seconds 30", Duration::from_secs(10), || {
+            run_helper("sleep", None, Duration::from_secs(10), || {
                 checks += 1;
                 checks >= 3
             })
@@ -780,30 +841,15 @@ mod tests {
         let _guard = TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let id_file =
-            std::env::temp_dir().join(format!("maia-job-child-{}.txt", std::process::id()));
-        let escaped = id_file.to_string_lossy().replace("'", "''");
-        let child_exe = powershell().to_string_lossy().replace("'", "''");
-        let script = format!(
-            "$child = Start-Process -FilePath '{child_exe}' -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 30') -PassThru; Set-Content -LiteralPath '{escaped}' -Value $child.Id"
-        );
-        let result =
-            run_script(&script, Duration::from_secs(10), || false).expect("contained execution");
+        let id_file = child_pid_file();
+        let result = run_helper(
+            "spawn-and-exit",
+            Some(&id_file),
+            Duration::from_secs(15),
+            || false,
+        )
+        .expect("contained execution");
         assert!(matches!(result, Completion::Exited(0)));
-        let child_id: u32 = std::fs::read_to_string(&id_file)
-            .expect("child pid evidence")
-            .trim()
-            .parse()
-            .expect("numeric child pid");
-        let process =
-            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | 0x0010_0000, 0, child_id) };
-        let _ = std::fs::remove_file(&id_file);
-        assert!(
-            !process.is_null(),
-            "grandchild process should be observable"
-        );
-        let ended = unsafe { WaitForSingleObject(process, 5_000) } == WAIT_OBJECT_0;
-        unsafe { CloseHandle(process) };
-        assert!(ended, "grandchild survived containment owner");
+        assert_process_ended(&id_file);
     }
 }
