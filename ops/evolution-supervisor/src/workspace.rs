@@ -15,6 +15,7 @@ pub enum State {
 pub enum TerminalOutcome {
     Rejected,
     Cancelled,
+    IsolationUnavailable,
     InfraError,
 }
 

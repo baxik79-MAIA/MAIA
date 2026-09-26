@@ -4,6 +4,7 @@ from evolution_supervisor_contract import validate as validate_evolution_supervi
 from evolution_tier0_contract import validate as validate_evolution_tier0
 from evolution_workspace_contract import validate as validate_evolution_workspace
 from evolution_mutation_tier1_contract import validate as validate_evolution_mutation_tier1
+from evolution_protected_runtime_contract import validate as validate_evolution_protected_runtime
 import sys, yaml, subprocess, shutil
 ROOT=Path(__file__).resolve().parents[1]
 SPEC=ROOT/'spec'
@@ -1653,6 +1654,7 @@ errors.extend(validate_evolution_supervisor(loaded.get('evolution_supervisor.yam
 errors.extend(validate_evolution_tier0(loaded.get('evolution_tier0.yaml')))
 errors.extend(validate_evolution_workspace(loaded.get('evolution_workspace.yaml')))
 errors.extend(validate_evolution_mutation_tier1(loaded.get('evolution_mutation_tier1.yaml')))
+errors.extend(validate_evolution_protected_runtime(loaded.get('evolution_protected_runtime.yaml')))
 
 if errors:
     print('SPEC GUARD FAILED')

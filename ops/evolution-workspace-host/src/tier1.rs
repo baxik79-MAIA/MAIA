@@ -1,17 +1,15 @@
 //! Fixed, offline Tier 1 Cargo verification for the single M0.16.3 surface.
 //! Candidate data cannot select executables, packages, arguments, or cwd.
+use maia_evolution_process_host::{Completion, VerifierCommand, run_contained};
 use maia_evolution_supervisor::mutation::{
-    CheckEvidence, CheckKind, CheckOutcome, EVOLVABLE_PATHS, PortFailure, Tier1Evidence,
-    Tier1Outcome,
+    CheckEvidence, CheckKind, CheckOutcome, PortFailure, Tier1Evidence, Tier1Outcome,
 };
 use maia_evolution_supervisor::workspace::Identity;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-const PACKAGE: &str = "maia-local-intelligence-host";
 const COMMAND_BOUND: Duration = Duration::from_secs(120);
-const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[cfg(windows)]
 fn local_msvc_paths() -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
@@ -70,11 +68,13 @@ fn local_msvc_paths() -> (Vec<std::path::PathBuf>, Vec<std::path::PathBuf>) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandResult {
     Passed,
-    Failed,
+    Failed(i32),
+    ResourceLimit,
+    Cancelled,
     Infrastructure,
 }
 
-fn command_env(command: &mut Command, target: &Path) {
+fn command_env(command: &mut Command, target: &Path, _toolchain_bin: &Path) {
     command.env_clear();
     for key in [
         "PATH",
@@ -98,15 +98,16 @@ fn command_env(command: &mut Command, target: &Path) {
     #[cfg(windows)]
     {
         let (bins, libs) = local_msvc_paths();
-        if !bins.is_empty() {
-            let mut paths = bins;
-            if let Some(original) = std::env::var_os("PATH") {
-                paths.extend(std::env::split_paths(&original));
-            }
-            if let Ok(path) = std::env::join_paths(paths) {
-                command.env("PATH", path);
-            }
+        let mut paths = bins;
+        paths.insert(0, _toolchain_bin.to_owned());
+        if let Some(original) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&original));
         }
+        if let Ok(path) = std::env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+        command.env("RUSTC", _toolchain_bin.join("rustc.exe"));
+        command.env("RUSTDOC", _toolchain_bin.join("rustdoc.exe"));
         if !libs.is_empty()
             && let Ok(path) = std::env::join_paths(libs)
         {
@@ -139,74 +140,97 @@ fn linker_available() -> bool {
     }
 }
 
-fn run(root: &Path, target: &Path, arguments: &[&str]) -> CommandResult {
+fn fixed_environment(
+    target: &Path,
+    toolchain_bin: &Path,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
     let mut command = Command::new("cargo");
-    command.current_dir(root).args(arguments);
-    command_env(&mut command, target);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(_) => return CommandResult::Infrastructure,
+    command_env(&mut command, target, toolchain_bin);
+    command
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+        .collect::<Vec<_>>()
+}
+
+fn toolchain_executable(name: &str) -> Result<std::path::PathBuf, CommandResult> {
+    let path = std::env::var_os("PATH").ok_or(CommandResult::Infrastructure)?;
+    let rustup = std::env::split_paths(&path)
+        .map(|directory| directory.join("rustup.exe"))
+        .find(|candidate| candidate.is_file())
+        .ok_or(CommandResult::Infrastructure)?;
+    let output = Command::new(rustup)
+        .args(["which", name])
+        .output()
+        .map_err(|_| CommandResult::Infrastructure)?;
+    if !output.status.success() {
+        return Err(CommandResult::Infrastructure);
+    }
+    let path = std::str::from_utf8(&output.stdout)
+        .map_err(|_| CommandResult::Infrastructure)?
+        .trim();
+    let path = Path::new(path);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(CommandResult::Infrastructure);
+    }
+    std::fs::canonicalize(path).map_err(|_| CommandResult::Infrastructure)
+}
+
+fn run(
+    root: &Path,
+    target: &Path,
+    verifier_command: VerifierCommand,
+    cancelled: &mut dyn FnMut() -> bool,
+) -> CommandResult {
+    let cargo = match toolchain_executable("cargo") {
+        Ok(program) => program,
+        Err(result) => return result,
     };
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    CommandResult::Passed
-                } else {
-                    CommandResult::Failed
-                };
-            }
-            Ok(None) if started.elapsed() < COMMAND_BOUND => {
-                std::thread::sleep(POLL_INTERVAL);
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return CommandResult::Infrastructure;
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return CommandResult::Infrastructure;
-            }
-        }
+    let toolchain_bin = cargo.parent().ok_or(CommandResult::Infrastructure);
+    let Ok(toolchain_bin) = toolchain_bin else {
+        return CommandResult::Infrastructure;
+    };
+    match run_contained(
+        verifier_command,
+        toolchain_bin,
+        root,
+        target,
+        &fixed_environment(target, toolchain_bin),
+        COMMAND_BOUND,
+        cancelled,
+    ) {
+        Ok(Completion::Exited(0)) => CommandResult::Passed,
+        Ok(Completion::Exited(code)) => CommandResult::Failed(code),
+        Ok(Completion::ResourceLimit) => CommandResult::ResourceLimit,
+        Ok(Completion::TimedOut) => CommandResult::ResourceLimit,
+        Ok(Completion::Cancelled) => CommandResult::Cancelled,
+        Err(_) => CommandResult::Infrastructure,
     }
 }
 
-fn run_rustfmt(root: &Path, target: &Path) -> CommandResult {
-    let source = root.join(EVOLVABLE_PATHS[0]);
-    let mut command = Command::new("rustfmt");
-    command
-        .current_dir(root)
-        .arg("--check")
-        .arg("--edition")
-        .arg("2024")
-        .arg(source);
-    command_env(&mut command, target);
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(_) => return CommandResult::Infrastructure,
+fn run_rustfmt(root: &Path, target: &Path, cancelled: &mut dyn FnMut() -> bool) -> CommandResult {
+    let cargo = match toolchain_executable("cargo") {
+        Ok(program) => program,
+        Err(result) => return result,
     };
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    CommandResult::Passed
-                } else {
-                    CommandResult::Failed
-                };
-            }
-            Ok(None) if started.elapsed() < COMMAND_BOUND => {
-                std::thread::sleep(POLL_INTERVAL);
-            }
-            Ok(None) | Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return CommandResult::Infrastructure;
-            }
-        }
+    let toolchain_bin = cargo.parent().ok_or(CommandResult::Infrastructure);
+    let Ok(toolchain_bin) = toolchain_bin else {
+        return CommandResult::Infrastructure;
+    };
+    match run_contained(
+        VerifierCommand::RustfmtAllowlistedSource,
+        toolchain_bin,
+        root,
+        target,
+        &fixed_environment(target, toolchain_bin),
+        COMMAND_BOUND,
+        cancelled,
+    ) {
+        Ok(Completion::Exited(0)) => CommandResult::Passed,
+        Ok(Completion::Exited(code)) => CommandResult::Failed(code),
+        Ok(Completion::ResourceLimit) => CommandResult::ResourceLimit,
+        Ok(Completion::TimedOut) => CommandResult::ResourceLimit,
+        Ok(Completion::Cancelled) => CommandResult::Cancelled,
+        Err(_) => CommandResult::Infrastructure,
     }
 }
 
@@ -217,6 +241,19 @@ pub trait Tier1Verifier {
         candidate_workspace: &Path,
         changed_path: &str,
     ) -> Result<Tier1Evidence, PortFailure>;
+
+    fn verify_cancellable(
+        &mut self,
+        identity: &Identity,
+        candidate_workspace: &Path,
+        changed_path: &str,
+        cancelled: &mut dyn FnMut() -> bool,
+    ) -> Result<Tier1Evidence, PortFailure> {
+        if cancelled() {
+            return Err(PortFailure::Cancelled);
+        }
+        self.verify(identity, candidate_workspace, changed_path)
+    }
 }
 
 /// The verifier has a fixed package, command list, offline mode, isolated
@@ -231,6 +268,16 @@ impl Tier1Verifier for FixedCargoTier1Verifier {
         identity: &Identity,
         candidate_workspace: &Path,
         changed_path: &str,
+    ) -> Result<Tier1Evidence, PortFailure> {
+        self.verify_cancellable(identity, candidate_workspace, changed_path, &mut || false)
+    }
+
+    fn verify_cancellable(
+        &mut self,
+        identity: &Identity,
+        candidate_workspace: &Path,
+        changed_path: &str,
+        cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<Tier1Evidence, PortFailure> {
         if !linker_available() {
             return Err(PortFailure::Infrastructure);
@@ -248,62 +295,20 @@ impl Tier1Verifier for FixedCargoTier1Verifier {
             std::fs::canonicalize(candidate_workspace).map_err(|_| PortFailure::Infrastructure)?;
         let target = root.join("target/m0163-tier1");
         let checks = [
-            (
-                CheckKind::SyntaxStatic,
-                run_rustfmt(&root, &target),
-                "rustfmt-fixed-file",
-            ),
+            (CheckKind::SyntaxStatic, None, "rustfmt-fixed-file"),
             (
                 CheckKind::FormattingLint,
-                run(
-                    &root,
-                    &target,
-                    &[
-                        "clippy",
-                        "-p",
-                        PACKAGE,
-                        "--all-targets",
-                        "--all-features",
-                        "--locked",
-                        "--offline",
-                        "--",
-                        "-D",
-                        "warnings",
-                    ],
-                ),
+                Some(VerifierCommand::CargoClippyHostComponent),
                 "cargo-clippy",
             ),
             (
                 CheckKind::ComponentBuild,
-                run(
-                    &root,
-                    &target,
-                    &[
-                        "check",
-                        "-p",
-                        PACKAGE,
-                        "--all-targets",
-                        "--all-features",
-                        "--locked",
-                        "--offline",
-                    ],
-                ),
+                Some(VerifierCommand::CargoCheckHostComponent),
                 "cargo-check",
             ),
             (
                 CheckKind::TargetedTests,
-                run(
-                    &root,
-                    &target,
-                    &[
-                        "test",
-                        "-p",
-                        PACKAGE,
-                        "--locked",
-                        "--offline",
-                        "--no-fail-fast",
-                    ],
-                ),
+                Some(VerifierCommand::CargoTestHostComponent),
                 "cargo-test",
             ),
         ];
@@ -313,12 +318,27 @@ impl Tier1Verifier for FixedCargoTier1Verifier {
             outcome: CheckOutcome::Passed,
             evidence_ref: format!("candidate-workspace:{}", identity.workspace_id),
         }];
-        for (check, result, label) in checks {
+        for (check, command, label) in checks {
+            let result = if cancelled() {
+                CommandResult::Cancelled
+            } else if let Some(command) = command {
+                run(&root, &target, command, cancelled)
+            } else {
+                run_rustfmt(&root, &target, cancelled)
+            };
             let check_outcome = match result {
                 CommandResult::Passed => CheckOutcome::Passed,
-                CommandResult::Failed => {
+                CommandResult::Failed(_) => {
                     outcome = Tier1Outcome::Failed;
                     CheckOutcome::Failed
+                }
+                CommandResult::ResourceLimit => {
+                    outcome = Tier1Outcome::ResourceLimit;
+                    CheckOutcome::ResourceLimit
+                }
+                CommandResult::Cancelled => {
+                    outcome = Tier1Outcome::Cancelled;
+                    CheckOutcome::Cancelled
                 }
                 CommandResult::Infrastructure => {
                     outcome = Tier1Outcome::InfraError;
@@ -330,6 +350,14 @@ impl Tier1Verifier for FixedCargoTier1Verifier {
                 outcome: check_outcome,
                 evidence_ref: format!("{label}:fixed-command-result"),
             });
+            if matches!(
+                result,
+                CommandResult::ResourceLimit
+                    | CommandResult::Cancelled
+                    | CommandResult::Infrastructure
+            ) {
+                break;
+            }
         }
         // Git cleanliness/protected-surface integrity is checked after this
         // verifier returns, by the owning workspace adapter.

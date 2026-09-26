@@ -31,6 +31,89 @@ pub trait Gate {
         identity: &Identity,
         approval_reference: &str,
     ) -> Result<bool, PortError>;
+    /// Rechecks all host-owned protected facts as one versioned snapshot at
+    /// the last policy boundary before a mutation or verifier start.
+    fn operation_current(
+        &mut self,
+        identity: &Identity,
+        approval_reference: &str,
+    ) -> Result<bool, PortError> {
+        Ok(self.supervisor_ready()?
+            && self.development_profile()?
+            && self.parent_current(identity)?
+            && self.reservation_current(identity)?
+            && self.paths_allowed(identity)?
+            && self.approval_current(identity, approval_reference)?)
+    }
+    fn operation_snapshot(
+        &mut self,
+        identity: &Identity,
+        approval_reference: &str,
+    ) -> Result<Option<OperationSnapshot>, PortError> {
+        Ok(self
+            .operation_current(identity, approval_reference)?
+            .then(|| OperationSnapshot::for_identity(identity, approval_reference, 0)))
+    }
+    fn operation_snapshot_current(
+        &mut self,
+        identity: &Identity,
+        approval_reference: &str,
+        snapshot: &OperationSnapshot,
+    ) -> Result<bool, PortError> {
+        Ok(snapshot.matches(identity, approval_reference)
+            && self.operation_current(identity, approval_reference)?)
+    }
+    /// No candidate verifier may start unless the host can prove the required
+    /// no-network and filesystem boundary for its selected execution mode.
+    fn tier1_isolation_ready(&mut self) -> Result<bool, PortError> {
+        Ok(false)
+    }
+    fn cancellation_requested(&mut self) -> Result<bool, PortError> {
+        Ok(false)
+    }
+}
+
+/// Immutable, candidate-bound decision value. Protected gates additionally
+/// bind it to their private state version and admitted-evidence fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperationSnapshot {
+    pub state_version: u64,
+    pub candidate_id: String,
+    pub workspace_id: String,
+    pub generation_id: String,
+    pub hypothesis_id: String,
+    pub parent_commit: String,
+    pub approval_reference: String,
+    pub admission_fingerprint: String,
+    pub canonical_repository_identity: String,
+    pub canonical_repository_state: String,
+}
+
+impl OperationSnapshot {
+    pub(crate) fn for_identity(identity: &Identity, approval: &str, version: u64) -> Self {
+        Self {
+            state_version: version,
+            candidate_id: identity.workspace_id.clone(),
+            workspace_id: identity.workspace_id.clone(),
+            generation_id: identity.generation_id.clone(),
+            hypothesis_id: identity.hypothesis_id.clone(),
+            parent_commit: identity.parent_source_commit.clone(),
+            approval_reference: approval.to_owned(),
+            admission_fingerprint: format!(
+                "{:x}",
+                Sha256::digest(format!("{identity:?}").as_bytes())
+            ),
+            canonical_repository_identity: String::new(),
+            canonical_repository_state: String::new(),
+        }
+    }
+
+    pub(crate) fn matches(&self, identity: &Identity, approval: &str) -> bool {
+        let mut expected = Self::for_identity(identity, approval, self.state_version);
+        expected.canonical_repository_identity = self.canonical_repository_identity.clone();
+        expected.canonical_repository_state = self.canonical_repository_state.clone();
+        self == &expected
+    }
 }
 
 pub trait Evidence {
@@ -54,6 +137,7 @@ pub struct GitWorkspaceHost<G, E, V = FixedCargoTier1Verifier> {
     verifier: V,
     owned: BTreeMap<String, Identity>,
     quarantined: BTreeSet<String>,
+    active_approval: Option<String>,
 }
 
 fn safe_component(value: &str) -> bool {
@@ -84,6 +168,27 @@ fn git(repository: &Path, args: &[&str]) -> Result<String, PortError> {
         return Err(PortError);
     }
     String::from_utf8(output.stdout).map_err(|_| PortError)
+}
+
+fn canonical_repository_snapshot(
+    repository: &Path,
+    expected_commit: &str,
+) -> Result<(String, String), PortFailure> {
+    let canonical = fs::canonicalize(repository).map_err(|_| PortFailure::Infrastructure)?;
+    if canonical != repository {
+        return Err(PortFailure::ProtectedTarget);
+    }
+    let head = git(&canonical, &["rev-parse", "HEAD"]).map_err(|_| PortFailure::Infrastructure)?;
+    let status = git(&canonical, &["status", "--porcelain=v1", "-z"])
+        .map_err(|_| PortFailure::Infrastructure)?;
+    if head.trim() != expected_commit || !status.is_empty() {
+        return Err(PortFailure::ProtectedTarget);
+    }
+    let state = format!(
+        "{:x}",
+        Sha256::digest(format!("{}\0{}", head.trim(), status).as_bytes())
+    );
+    Ok((canonical.to_string_lossy().into_owned(), state))
 }
 
 fn changed_line_count(before: &str, after: &str) -> Result<u32, PortFailure> {
@@ -171,6 +276,7 @@ impl<G: Gate, E: Evidence, V> GitWorkspaceHost<G, E, V> {
             verifier,
             owned: BTreeMap::new(),
             quarantined: BTreeSet::new(),
+            active_approval: None,
         })
     }
 
@@ -211,14 +317,41 @@ impl<G: Gate, E: Evidence, V> GitWorkspaceHost<G, E, V> {
         if !same_worktree_root || candidate_head.trim() != identity.parent_source_commit {
             return Err(PortFailure::ProtectedTarget);
         }
-        let parent = git(&self.repository, &["rev-parse", "HEAD"])
-            .map_err(|_| PortFailure::Infrastructure)?;
-        let canonical_status = git(&self.repository, &["status", "--porcelain=v1", "-z"])
-            .map_err(|_| PortFailure::Infrastructure)?;
-        if parent.trim() != identity.parent_source_commit || !canonical_status.is_empty() {
-            return Err(PortFailure::ProtectedTarget);
-        }
+        canonical_repository_snapshot(&self.repository, &identity.parent_source_commit)?;
         Ok(canonical)
+    }
+
+    fn bind_operation_snapshot(
+        &self,
+        mut snapshot: OperationSnapshot,
+        identity: &Identity,
+    ) -> Result<OperationSnapshot, PortFailure> {
+        let (repository_identity, repository_state) =
+            canonical_repository_snapshot(&self.repository, &identity.parent_source_commit)?;
+        snapshot.canonical_repository_identity = repository_identity;
+        snapshot.canonical_repository_state = repository_state;
+        Ok(snapshot)
+    }
+
+    fn operation_snapshot_current(
+        &mut self,
+        identity: &Identity,
+        approval_reference: &str,
+        snapshot: &OperationSnapshot,
+    ) -> Result<bool, PortFailure> {
+        if !self
+            .gate
+            .operation_snapshot_current(identity, approval_reference, snapshot)
+            .map_err(|_| PortFailure::Infrastructure)?
+        {
+            return Ok(false);
+        }
+        let (repository_identity, repository_state) =
+            canonical_repository_snapshot(&self.repository, &identity.parent_source_commit)?;
+        Ok(
+            snapshot.canonical_repository_identity == repository_identity
+                && snapshot.canonical_repository_state == repository_state,
+        )
     }
 
     fn candidate_file(&self, identity: &Identity, relative: &str) -> Result<PathBuf, PortFailure> {
@@ -358,6 +491,10 @@ impl<G: Gate, E: Evidence, V> WorkspacePort for GitWorkspaceHost<G, E, V> {
 }
 
 impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<G, E, V> {
+    fn cancellation_requested(&mut self) -> Result<bool, PortError> {
+        self.gate.cancellation_requested()
+    }
+
     fn approval_current(
         &mut self,
         identity: &Identity,
@@ -385,12 +522,28 @@ impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<
         identity: &Identity,
         request: &MutationRequest,
     ) -> Result<AppliedChange, PortFailure> {
+        let snapshot = self
+            .gate
+            .operation_snapshot(identity, &request.approval_reference)
+            .map_err(|_| PortFailure::Infrastructure)?;
+        let Some(snapshot) = snapshot else {
+            return if self
+                .gate
+                .cancellation_requested()
+                .map_err(|_| PortFailure::Infrastructure)?
+            {
+                Err(PortFailure::Cancelled)
+            } else {
+                Err(PortFailure::ProtectedTarget)
+            };
+        };
         if request.candidate_workspace_id != identity.workspace_id
             || request.generation_id != identity.generation_id
             || request.hypothesis_id != identity.hypothesis_id
         {
             return Err(PortFailure::Rejected);
         }
+        let snapshot = self.bind_operation_snapshot(snapshot, identity)?;
         if request.expected_text.is_empty()
             || request.expected_text == request.replacement_text
             || request.expected_text.len() > MAX_REPLACEMENT_BYTES
@@ -428,6 +581,9 @@ impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<
         let after_digest = format!("{:x}", Sha256::digest(after));
         // Re-resolve immediately before opening. Candidate workspaces are only
         // writable through this host capability; symlink parents are refused.
+        if !self.operation_snapshot_current(identity, &request.approval_reference, &snapshot)? {
+            return Err(PortFailure::Cancelled);
+        }
         if self.candidate_file(identity, &request.path)? != target {
             return Err(PortFailure::ProtectedTarget);
         }
@@ -439,6 +595,7 @@ impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<
         file.write_all(after)
             .and_then(|()| file.sync_all())
             .map_err(|_| PortFailure::Infrastructure)?;
+        self.active_approval = Some(request.approval_reference.clone());
         Ok(AppliedChange {
             path: request.path.clone(),
             before_sha256: before_digest,
@@ -452,8 +609,77 @@ impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<
         identity: &Identity,
         changed_path: &str,
     ) -> Result<Tier1Evidence, PortFailure> {
+        if self
+            .gate
+            .cancellation_requested()
+            .map_err(|_| PortFailure::Infrastructure)?
+        {
+            return Err(PortFailure::Cancelled);
+        }
+        if !self
+            .gate
+            .tier1_isolation_ready()
+            .map_err(|_| PortFailure::Infrastructure)?
+        {
+            return Err(PortFailure::IsolationUnavailable);
+        }
+        let snapshot = self
+            .gate
+            .operation_snapshot(
+                identity,
+                self.active_approval
+                    .as_deref()
+                    .ok_or(PortFailure::Rejected)?,
+            )
+            .map_err(|_| PortFailure::Infrastructure)?;
+        let Some(snapshot) = snapshot else {
+            return if self
+                .gate
+                .cancellation_requested()
+                .map_err(|_| PortFailure::Infrastructure)?
+            {
+                Err(PortFailure::Cancelled)
+            } else {
+                Err(PortFailure::ProtectedTarget)
+            };
+        };
+        let snapshot = self.bind_operation_snapshot(snapshot, identity)?;
         let workspace = self.candidate_dir(identity)?;
-        let mut evidence = self.verifier.verify(identity, &workspace, changed_path)?;
+        let approval = self
+            .active_approval
+            .as_deref()
+            .ok_or(PortFailure::Rejected)?
+            .to_owned();
+        let (result, gate_check_failed) = {
+            let gate = &mut self.gate;
+            let mut gate_check_failed = false;
+            let mut cancelled =
+                || match gate.operation_snapshot_current(identity, &approval, &snapshot) {
+                    Ok(true) => false,
+                    Ok(false) => true,
+                    Err(_) => {
+                        gate_check_failed = true;
+                        true
+                    }
+                };
+            let result = self.verifier.verify_cancellable(
+                identity,
+                &workspace,
+                changed_path,
+                &mut cancelled,
+            );
+            (result, gate_check_failed)
+        };
+        if gate_check_failed {
+            return Err(PortFailure::Infrastructure);
+        }
+        if !self.operation_snapshot_current(identity, &approval, &snapshot)? {
+            return Err(PortFailure::Cancelled);
+        }
+        let mut evidence = result?;
+        if !self.operation_snapshot_current(identity, &approval, &snapshot)? {
+            return Err(PortFailure::Cancelled);
+        }
         // Revalidate both the candidate and the canonical host after the
         // verifier returns. The verifier's fixed Cargo checks run build tools.
         let _ = self.candidate_dir(identity)?;
@@ -487,4 +713,5 @@ impl<G: Gate, E: Evidence, V: Tier1Verifier> MutationPorts for GitWorkspaceHost<
 }
 
 pub mod evidence;
+pub mod protected_runtime;
 pub mod tier1;

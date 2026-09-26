@@ -1,11 +1,12 @@
 //! Durable, content-free candidate lifecycle and mutation evidence journal.
 //! The journal is kept outside both the canonical repository and candidates.
+use fs2::FileExt;
 use maia_evolution_supervisor::mutation::{AttemptEvidence, CheckKind, CheckOutcome, Operation};
 use maia_evolution_supervisor::workspace::{Identity, PortError, State, TerminalOutcome};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub struct FileEvidenceJournal {
@@ -16,8 +17,8 @@ pub struct FileEvidenceJournal {
     poisoned: bool,
 }
 
-fn load_chain(path: &Path) -> Result<(u64, String, Vec<Value>), PortError> {
-    let file = File::open(path).map_err(|_| PortError)?;
+fn verify_chain(file: &mut File) -> Result<(u64, String, Vec<Value>), PortError> {
+    file.seek(SeekFrom::Start(0)).map_err(|_| PortError)?;
     let reader = BufReader::new(file);
     let mut sequence = 0u64;
     let mut previous_hash = String::new();
@@ -43,6 +44,16 @@ fn load_chain(path: &Path) -> Result<(u64, String, Vec<Value>), PortError> {
         previous_hash = calculated;
     }
     Ok((sequence, previous_hash, events))
+}
+
+fn load_chain(path: &Path) -> Result<(u64, String, Vec<Value>), PortError> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| PortError)?;
+    file.try_lock_exclusive().map_err(|_| PortError)?;
+    verify_chain(&mut file)
 }
 
 fn safe_token(value: &str) -> Value {
@@ -79,17 +90,20 @@ impl FileEvidenceJournal {
         {
             return Err(PortError);
         }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&canonical_path)
+            .map_err(|_| PortError)?;
+        file.try_lock_exclusive().map_err(|_| PortError)?;
         let (sequence, previous_hash) = if canonical_path.exists() {
-            let (sequence, previous_hash, _) = load_chain(&canonical_path)?;
+            let (sequence, previous_hash, _) = verify_chain(&mut file)?;
             (sequence, previous_hash)
         } else {
             (0, String::new())
         };
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&canonical_path)
-            .map_err(|_| PortError)?;
+        file.seek(SeekFrom::End(0)).map_err(|_| PortError)?;
         Ok(Self {
             path: canonical_path,
             file,
@@ -147,6 +161,7 @@ fn terminal_name(outcome: TerminalOutcome) -> &'static str {
     match outcome {
         TerminalOutcome::Rejected => "REJECTED",
         TerminalOutcome::Cancelled => "CANCELLED",
+        TerminalOutcome::IsolationUnavailable => "ISOLATION_UNAVAILABLE",
         TerminalOutcome::InfraError => "INFRA_ERROR",
     }
 }
@@ -166,7 +181,20 @@ fn check_outcome_name(outcome: CheckOutcome) -> &'static str {
     match outcome {
         CheckOutcome::Passed => "PASS",
         CheckOutcome::Failed => "FAIL",
+        CheckOutcome::ResourceLimit => "RESOURCE_LIMIT",
+        CheckOutcome::Cancelled => "CANCELLED",
         CheckOutcome::InfraError => "INFRA_ERROR",
+    }
+}
+
+fn tier1_outcome_name(outcome: maia_evolution_supervisor::mutation::Tier1Outcome) -> &'static str {
+    use maia_evolution_supervisor::mutation::Tier1Outcome;
+    match outcome {
+        Tier1Outcome::Passed => "PASSED",
+        Tier1Outcome::Failed => "FAILED",
+        Tier1Outcome::ResourceLimit => "RESOURCE_LIMIT",
+        Tier1Outcome::InfraError => "INFRA_ERROR",
+        Tier1Outcome::Cancelled => "CANCELLED",
     }
 }
 
@@ -207,7 +235,7 @@ impl super::Evidence for FileEvidenceJournal {
         });
         let tier1 = evidence.tier1.as_ref().map(|report| {
             json!({
-                "outcome": format!("{:?}", report.outcome).to_ascii_uppercase(),
+                "outcome": tier1_outcome_name(report.outcome),
                 "verifier_identity": safe_token(&report.verifier_identity),
                 "checks": report.checks.iter().map(|item| json!({
                     "check": check_name(item.check),

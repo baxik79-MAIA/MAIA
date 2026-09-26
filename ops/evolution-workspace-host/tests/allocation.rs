@@ -8,13 +8,19 @@ use maia_evolution_supervisor::workspace::{
     Failure, Identity, PortError, Request, State, TerminalOutcome, allocate,
 };
 use maia_evolution_workspace_host::{
-    Evidence, Gate, GitWorkspaceHost, evidence::FileEvidenceJournal, tier1::Tier1Verifier,
+    Evidence, Gate, GitWorkspaceHost,
+    evidence::FileEvidenceJournal,
+    protected_runtime::{ProtectedRuntimeGate, RuntimeProfile},
+    tier1::Tier1Verifier,
 };
 use sha2::Digest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static REAL_TIER1_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Default)]
 struct Checks {
@@ -67,7 +73,27 @@ impl Gate for Checks {
     fn approval_current(&mut self, _: &Identity, reference: &str) -> Result<bool, PortError> {
         Ok(self.approval && reference == "human-approval-1")
     }
+    fn tier1_isolation_ready(&mut self) -> Result<bool, PortError> {
+        Ok(true) // Synthetic fixture verifier, never launches a subprocess.
+    }
 }
+fn development_runtime() -> (
+    maia_evolution_workspace_host::protected_runtime::ProtectedRuntimeController,
+    ProtectedRuntimeGate,
+) {
+    let (controller, gate) = ProtectedRuntimeGate::new("supervisor-v1");
+    controller
+        .set_profile(RuntimeProfile::DevelopmentEvolution)
+        .unwrap();
+    controller.set_evolution_enabled(true).unwrap();
+    controller.set_kill_switch(false).unwrap();
+    controller.set_supervisor_integrity(true).unwrap();
+    controller
+        .set_observed_supervisor_identity("supervisor-v1")
+        .unwrap();
+    (controller, gate)
+}
+
 #[derive(Default)]
 struct Journal {
     states: Vec<(String, State)>,
@@ -107,6 +133,8 @@ fn tier1_report(outcome: Tier1Outcome) -> Tier1Evidence {
                     Tier1Outcome::Passed => CheckOutcome::Passed,
                     Tier1Outcome::Failed => CheckOutcome::Failed,
                     Tier1Outcome::InfraError => CheckOutcome::InfraError,
+                    Tier1Outcome::Cancelled => CheckOutcome::Cancelled,
+                    Tier1Outcome::ResourceLimit => CheckOutcome::ResourceLimit,
                 },
                 evidence_ref: format!("tier1:{check:?}"),
             })
@@ -149,6 +177,21 @@ impl Tier1Verifier for ProtectedSurfaceMutator {
         )
         .map_err(|_| PortFailure::Infrastructure)?;
         Ok(tier1_report(Tier1Outcome::Passed))
+    }
+}
+
+struct EarlyCancelled;
+impl Tier1Verifier for EarlyCancelled {
+    fn verify(&mut self, _: &Identity, _: &Path, _: &str) -> Result<Tier1Evidence, PortFailure> {
+        Ok(Tier1Evidence {
+            outcome: Tier1Outcome::Cancelled,
+            verifier_identity: "synthetic-fixed-verifier-v1".into(),
+            checks: vec![CheckEvidence {
+                check: CheckKind::CandidateIdentity,
+                outcome: CheckOutcome::Passed,
+                evidence_ref: "candidate-workspace:bound".into(),
+            }],
+        })
     }
 }
 
@@ -562,6 +605,9 @@ fn closed_record_failure_retries_without_redeleting_candidate() {
 
 #[test]
 fn allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline() {
+    let _tier1_guard = REAL_TIER1_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let fixture = Fixture::new();
     let mut host = fixture.host(Checks::all());
     let request = fixture.request("allowed");
@@ -758,6 +804,104 @@ fn tier1_failure_and_infrastructure_error_discard_candidate_without_rollback() {
 }
 
 #[test]
+fn resource_limit_is_distinct_from_test_failure_and_discards_only_candidate() {
+    let fixture = Fixture::new();
+    let request = fixture.request("resource-limit");
+    let tier0 = request.admission.clone();
+    let mut host = fixture.host_with_tier1(Checks::all(), Tier1Outcome::ResourceLimit);
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    let result = mutate_and_verify(
+        &mut candidate,
+        &tier0,
+        &mutation_request(&fixture, "resource-limit"),
+        &mut host,
+    );
+    assert_eq!(result.state, ResultState::ResourceLimit);
+    assert_eq!(candidate.outcome(), Some(TerminalOutcome::Rejected));
+    assert_eq!(candidate.state(), State::Closed);
+    assert!(!fixture.root.join("resource-limit").exists());
+    assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);
+    assert!(host.evidence().attempts.iter().any(|attempt| {
+        attempt.outcome == maia_evolution_supervisor::mutation::AttemptOutcome::ResourceLimit
+            && attempt
+                .tier1
+                .as_ref()
+                .is_some_and(|tier1| tier1.outcome == Tier1Outcome::ResourceLimit)
+    }));
+}
+
+#[test]
+fn protected_runtime_kill_switch_records_cancellation_and_discards_candidate() {
+    let fixture = Fixture::new();
+    let request = fixture.request("kill-switch");
+    let tier0 = request.admission.clone();
+    let (controller, gate) = development_runtime();
+    controller
+        .bind_admission(
+            &request,
+            "human-approval-1",
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+    let mut host =
+        GitWorkspaceHost::new(&fixture.repo, &fixture.root, gate, Journal::default()).unwrap();
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    controller.set_kill_switch(true).unwrap();
+    let result = mutate_and_verify(
+        &mut candidate,
+        &tier0,
+        &mutation_request(&fixture, "kill-switch"),
+        &mut host,
+    );
+    assert_eq!(result.state, ResultState::Cancelled);
+    assert_eq!(candidate.outcome(), Some(TerminalOutcome::Cancelled));
+    assert_eq!(candidate.state(), State::Closed);
+    assert!(!fixture.root.join("kill-switch").exists());
+    assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);
+    assert!(host.evidence().attempts.iter().any(|attempt| {
+        attempt.outcome == maia_evolution_supervisor::mutation::AttemptOutcome::Cancelled
+            && attempt.terminal_reason == Some(TerminalOutcome::Cancelled)
+    }));
+}
+
+#[test]
+fn deployment_locked_profile_cancels_mutation_without_touching_baseline() {
+    let fixture = Fixture::new();
+    let request = fixture.request("deployment-locked");
+    let tier0 = request.admission.clone();
+    let (controller, gate) = development_runtime();
+    controller
+        .bind_admission(
+            &request,
+            "human-approval-1",
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+    let mut host =
+        GitWorkspaceHost::new(&fixture.repo, &fixture.root, gate, Journal::default()).unwrap();
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    controller
+        .set_profile(RuntimeProfile::DeploymentLocked)
+        .unwrap();
+    let result = mutate_and_verify(
+        &mut candidate,
+        &tier0,
+        &mutation_request(&fixture, "deployment-locked"),
+        &mut host,
+    );
+    assert_eq!(result.state, ResultState::Cancelled);
+    assert_eq!(candidate.outcome(), Some(TerminalOutcome::Cancelled));
+    assert_eq!(
+        fs::read_to_string(fixture.repo.join("apps/local-intelligence-host/src/lib.rs")).unwrap(),
+        "pub fn marker() -> u8 {\n    1\n}\n"
+    );
+    assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);
+}
+
+#[test]
 fn verifier_side_effect_on_protected_candidate_file_fails_tier1_closed() {
     let fixture = Fixture::new();
     let mut host = GitWorkspaceHost::new_with_verifier(
@@ -783,6 +927,103 @@ fn verifier_side_effect_on_protected_candidate_file_fails_tier1_closed() {
     assert_eq!(
         fs::read_to_string(fixture.repo.join("baseline.txt")).unwrap(),
         "known good"
+    );
+    assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);
+}
+
+#[test]
+fn canonical_host_drift_invalidates_admission_before_mutation() {
+    let fixture = Fixture::new();
+    let request = fixture.request("canonical-drift");
+    let tier0 = request.admission.clone();
+    let mut host = fixture.host(Checks::all());
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    fs::write(fixture.repo.join("baseline.txt"), "host drift").unwrap();
+    let result = mutate_and_verify(
+        &mut candidate,
+        &tier0,
+        &mutation_request(&fixture, "canonical-drift"),
+        &mut host,
+    );
+    assert_eq!(result.state, ResultState::Rejected);
+    assert_eq!(candidate.state(), State::Closed);
+    assert_eq!(
+        fs::read_to_string(fixture.repo.join("apps/local-intelligence-host/src/lib.rs")).unwrap(),
+        "pub fn marker() -> u8 {\n    1\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.repo.join("baseline.txt")).unwrap(),
+        "host drift"
+    );
+}
+
+#[test]
+fn partial_tier1_cancellation_is_not_reclassified_as_infrastructure_or_test_failure() {
+    let fixture = Fixture::new();
+    let mut host = GitWorkspaceHost::new_with_verifier(
+        &fixture.repo,
+        &fixture.root,
+        Checks::all(),
+        Journal::default(),
+        EarlyCancelled,
+    )
+    .unwrap();
+    let request = fixture.request("partial-cancel");
+    let tier0 = request.admission.clone();
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    let result = mutate_and_verify(
+        &mut candidate,
+        &tier0,
+        &mutation_request(&fixture, "partial-cancel"),
+        &mut host,
+    );
+    assert_eq!(result.state, ResultState::Cancelled);
+    assert_eq!(candidate.outcome(), Some(TerminalOutcome::Cancelled));
+    let attempt = host.evidence().attempts.last().unwrap();
+    assert_eq!(
+        attempt.tier1.as_ref().unwrap().outcome,
+        Tier1Outcome::Cancelled
+    );
+    assert_eq!(
+        attempt.outcome,
+        maia_evolution_supervisor::mutation::AttemptOutcome::Cancelled
+    );
+    assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);
+}
+
+#[test]
+fn unavailable_os_isolation_is_recorded_separately_and_discards_candidate() {
+    let fixture = Fixture::new();
+    let request = fixture.request("isolation-unavailable");
+    let tier0 = request.admission.clone();
+    let (controller, gate) = development_runtime();
+    controller
+        .bind_admission(
+            &request,
+            "human-approval-1",
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+    let mut host =
+        GitWorkspaceHost::new(&fixture.repo, &fixture.root, gate, Journal::default()).unwrap();
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    let result = mutate_and_verify(
+        &mut candidate,
+        &tier0,
+        &mutation_request(&fixture, "isolation-unavailable"),
+        &mut host,
+    );
+    assert_eq!(result.state, ResultState::IsolationUnavailable);
+    assert_eq!(
+        candidate.outcome(),
+        Some(TerminalOutcome::IsolationUnavailable)
+    );
+    assert_eq!(
+        host.evidence().attempts.last().unwrap().outcome,
+        maia_evolution_supervisor::mutation::AttemptOutcome::IsolationUnavailable
     );
     assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.commit);
 }
@@ -822,6 +1063,9 @@ fn incomplete_tier1_evidence_fails_closed_and_discards_candidate() {
 
 #[test]
 fn durable_evidence_is_queryable_hash_chained_and_disjoint_from_candidate_and_host() {
+    let _tier1_guard = REAL_TIER1_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let fixture = Fixture::new();
     let journal_path = fixture.base.join("evolution-state/evidence.jsonl");
     fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
@@ -867,4 +1111,23 @@ fn durable_evidence_is_queryable_hash_chained_and_disjoint_from_candidate_and_ho
     tampered.push(' ');
     fs::write(&journal_path, tampered).unwrap();
     assert!(FileEvidenceJournal::open(&journal_path, &fixture.repo, &fixture.root).is_err());
+}
+
+#[test]
+fn journal_lock_is_exclusive_and_corruption_is_rejected_without_append() {
+    let fixture = Fixture::new();
+    let journal_path = fixture.base.join("evolution-state/evidence.jsonl");
+    fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+    let owner = FileEvidenceJournal::open(&journal_path, &fixture.repo, &fixture.root).unwrap();
+    assert!(FileEvidenceJournal::open(&journal_path, &fixture.repo, &fixture.root).is_err());
+    drop(owner);
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&journal_path)
+        .unwrap();
+    use std::io::Write;
+    file.write_all(b"{corrupt}\n").unwrap();
+    let before = fs::read(&journal_path).unwrap();
+    assert!(FileEvidenceJournal::open(&journal_path, &fixture.repo, &fixture.root).is_err());
+    assert_eq!(fs::read(&journal_path).unwrap(), before);
 }

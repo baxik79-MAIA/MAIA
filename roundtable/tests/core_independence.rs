@@ -203,6 +203,11 @@ const OTHER: &[(&str, &str)] = &[
         "maia-evolution-workspace-host",
         include_str!("../../ops/evolution-workspace-host/Cargo.toml"),
     ),
+    // M0.16.4: OS-specific process-tree containment remains in the ops host boundary.
+    (
+        "maia-evolution-process-host",
+        include_str!("../../ops/evolution-process-host/Cargo.toml"),
+    ),
 ];
 
 const WORKSPACE_MANIFEST: &str = include_str!("../../Cargo.toml");

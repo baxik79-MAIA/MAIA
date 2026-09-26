@@ -9,3 +9,5 @@ maia-evolution-supervisor = { path = "../evolution-supervisor" }
 serde_json = "1"
 sha2 = "0.10"
 same-file = "1"
+fs2 = "0.4.3"
+maia-evolution-process-host = { path = "../evolution-process-host" }

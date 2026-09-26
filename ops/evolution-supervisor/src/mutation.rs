@@ -49,6 +49,8 @@ pub const REQUIRED_TIER1_CHECKS: &[CheckKind] = &[
 pub enum CheckOutcome {
     Passed,
     Failed,
+    ResourceLimit,
+    Cancelled,
     InfraError,
 }
 
@@ -63,6 +65,8 @@ pub struct CheckEvidence {
 pub enum Tier1Outcome {
     Passed,
     Failed,
+    ResourceLimit,
+    Cancelled,
     #[default]
     InfraError,
 }
@@ -113,6 +117,9 @@ pub enum AttemptOutcome {
     Applied,
     Tier1Passed,
     Tier1Failed,
+    ResourceLimit,
+    Cancelled,
+    IsolationUnavailable,
     InfraError,
 }
 
@@ -131,6 +138,7 @@ pub enum RejectReason {
     ProtectedTarget,
     MutationRejected,
     Tier1Failed,
+    Tier1ResourceLimit,
     Tier1EvidenceIncomplete,
 }
 
@@ -160,9 +168,12 @@ pub enum PortFailure {
     Rejected,
     Infrastructure,
     ProtectedTarget,
+    Cancelled,
+    IsolationUnavailable,
 }
 
 pub trait MutationPorts: WorkspacePort {
+    fn cancellation_requested(&mut self) -> Result<bool, PortError>;
     fn approval_current(
         &mut self,
         identity: &Identity,
@@ -189,6 +200,9 @@ pub enum ResultState {
     Tier1Passed,
     Rejected,
     InfraError,
+    Cancelled,
+    ResourceLimit,
+    IsolationUnavailable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +313,129 @@ fn infra(
     }
 }
 
+fn cancelled(
+    candidate: &mut Candidate,
+    ports: &mut impl MutationPorts,
+    evidence: &mut AttemptEvidence,
+) -> MutationResult {
+    evidence.outcome = AttemptOutcome::Cancelled;
+    evidence.reason = None;
+    evidence.terminal_state = None;
+    evidence.terminal_reason = Some(TerminalOutcome::Cancelled);
+    if ports.record_attempt(evidence).is_err() {
+        ports.quarantine_candidate(candidate.identity());
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: None,
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    if candidate
+        .discard(ports, TerminalOutcome::Cancelled)
+        .is_err()
+    {
+        ports.quarantine_candidate(candidate.identity());
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: None,
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    evidence.terminal_state = Some(State::Closed);
+    if ports.record_attempt(evidence).is_err() {
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: None,
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    MutationResult {
+        state: ResultState::Cancelled,
+        reason: None,
+        changed_file: evidence.changed_file.clone(),
+        tier1: evidence.tier1.clone(),
+    }
+}
+
+fn isolation_unavailable(
+    candidate: &mut Candidate,
+    ports: &mut impl MutationPorts,
+    evidence: &mut AttemptEvidence,
+) -> MutationResult {
+    evidence.outcome = AttemptOutcome::IsolationUnavailable;
+    evidence.reason = None;
+    evidence.terminal_state = None;
+    evidence.terminal_reason = Some(TerminalOutcome::IsolationUnavailable);
+    if ports.record_attempt(evidence).is_err()
+        || candidate
+            .discard(ports, TerminalOutcome::IsolationUnavailable)
+            .is_err()
+    {
+        ports.quarantine_candidate(candidate.identity());
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: None,
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    evidence.terminal_state = Some(State::Closed);
+    if ports.record_attempt(evidence).is_err() {
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: None,
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    MutationResult {
+        state: ResultState::IsolationUnavailable,
+        reason: None,
+        changed_file: evidence.changed_file.clone(),
+        tier1: evidence.tier1.clone(),
+    }
+}
+
+fn resource_limit(
+    candidate: &mut Candidate,
+    ports: &mut impl MutationPorts,
+    evidence: &mut AttemptEvidence,
+) -> MutationResult {
+    evidence.outcome = AttemptOutcome::ResourceLimit;
+    evidence.reason = Some(RejectReason::Tier1ResourceLimit);
+    evidence.terminal_state = None;
+    evidence.terminal_reason = Some(TerminalOutcome::Rejected);
+    if ports.record_attempt(evidence).is_err()
+        || candidate.discard(ports, TerminalOutcome::Rejected).is_err()
+    {
+        ports.quarantine_candidate(candidate.identity());
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: Some(RejectReason::Tier1ResourceLimit),
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    evidence.terminal_state = Some(State::Closed);
+    if ports.record_attempt(evidence).is_err() {
+        return MutationResult {
+            state: ResultState::InfraError,
+            reason: Some(RejectReason::Tier1ResourceLimit),
+            changed_file: evidence.changed_file.clone(),
+            tier1: evidence.tier1.clone(),
+        };
+    }
+    MutationResult {
+        state: ResultState::ResourceLimit,
+        reason: Some(RejectReason::Tier1ResourceLimit),
+        changed_file: evidence.changed_file.clone(),
+        tier1: evidence.tier1.clone(),
+    }
+}
+
 /// Applies one human-approved, exact-path replacement to an active candidate
 /// after revalidating its Tier 0 evidence and host-owned identity. Tier 1 is
 /// run only after a successful mutation. A pass leaves the candidate active;
@@ -331,6 +468,11 @@ pub fn mutate_and_verify(
 
     if ports.record_attempt(&evidence).is_err() {
         return infra(candidate, ports, &mut evidence);
+    }
+    match ports.cancellation_requested() {
+        Ok(true) => return cancelled(candidate, ports, &mut evidence),
+        Ok(false) => {}
+        Err(_) => return infra(candidate, ports, &mut evidence),
     }
     if candidate.state() != State::Active {
         return deny(
@@ -467,6 +609,10 @@ pub fn mutate_and_verify(
             );
         }
         Err(PortFailure::Infrastructure) => return infra(candidate, ports, &mut evidence),
+        Err(PortFailure::Cancelled) => return cancelled(candidate, ports, &mut evidence),
+        Err(PortFailure::IsolationUnavailable) => {
+            return isolation_unavailable(candidate, ports, &mut evidence);
+        }
     };
     if changed.path != request.path
         || changed.changed_lines == 0
@@ -489,12 +635,30 @@ pub fn mutate_and_verify(
     evidence.tier1 = match ports.verify_tier1(&identity, &changed.path) {
         Ok(report) => Some(report),
         Err(PortFailure::Infrastructure) => return infra(candidate, ports, &mut evidence),
-        Err(_) => {
+        Err(PortFailure::Cancelled) => return cancelled(candidate, ports, &mut evidence),
+        Err(PortFailure::IsolationUnavailable) => {
+            return isolation_unavailable(candidate, ports, &mut evidence);
+        }
+        Err(PortFailure::Rejected) => {
             evidence.outcome = AttemptOutcome::Tier1Failed;
             return deny(candidate, ports, &mut evidence, RejectReason::Tier1Failed);
         }
+        Err(PortFailure::ProtectedTarget) => {
+            return deny(
+                candidate,
+                ports,
+                &mut evidence,
+                RejectReason::ProtectedTarget,
+            );
+        }
     };
     let report = evidence.tier1.as_ref().expect("set above");
+    match report.outcome {
+        Tier1Outcome::Cancelled => return cancelled(candidate, ports, &mut evidence),
+        Tier1Outcome::ResourceLimit => return resource_limit(candidate, ports, &mut evidence),
+        Tier1Outcome::InfraError => return infra(candidate, ports, &mut evidence),
+        Tier1Outcome::Passed | Tier1Outcome::Failed => {}
+    }
     if !report.is_complete() {
         evidence.outcome = AttemptOutcome::InfraError;
         return infra(candidate, ports, &mut evidence);
@@ -518,7 +682,9 @@ pub fn mutate_and_verify(
             evidence.outcome = AttemptOutcome::Tier1Failed;
             deny(candidate, ports, &mut evidence, RejectReason::Tier1Failed)
         }
+        Tier1Outcome::ResourceLimit => resource_limit(candidate, ports, &mut evidence),
         Tier1Outcome::InfraError => infra(candidate, ports, &mut evidence),
+        Tier1Outcome::Cancelled => cancelled(candidate, ports, &mut evidence),
         Tier1Outcome::Passed => {
             evidence.outcome = AttemptOutcome::InfraError;
             infra(candidate, ports, &mut evidence)
