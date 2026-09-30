@@ -85,7 +85,7 @@ EXPECTED = {
     },
     "resource_limits": {
         "max_concurrent_verifier_trees": 1,
-        "max_command_wall_seconds": 120,
+        "max_command_wall_seconds": 900,
         "cpu_rate_percent": 75,
         "job_memory_bytes": 4294967296,
         "active_process_limit": 64,

@@ -3029,7 +3029,7 @@ containment:
   stronger_isolation_capabilities: unavailable_until_os_acl_and_no_network_are_verified
 resource_limits:
   max_concurrent_verifier_trees: 1
-  max_command_wall_seconds: 120
+  max_command_wall_seconds: 900
   cpu_rate_percent: 75
   job_memory_bytes: 4294967296
   active_process_limit: 64

@@ -25,6 +25,7 @@ static REAL_TIER1_LOCK: Mutex<()> = Mutex::new(());
 #[derive(Default)]
 struct Checks {
     ready: bool,
+    isolation_ready: bool,
     profile: bool,
     admission: bool,
     parent: bool,
@@ -37,6 +38,7 @@ impl Checks {
     fn all() -> Self {
         Self {
             ready: true,
+            isolation_ready: true,
             profile: true,
             admission: true,
             parent: true,
@@ -74,7 +76,7 @@ impl Gate for Checks {
         Ok(self.approval && reference == "human-approval-1")
     }
     fn tier1_isolation_ready(&mut self) -> Result<bool, PortError> {
-        Ok(true) // Synthetic fixture verifier, never launches a subprocess.
+        Ok(self.isolation_ready)
     }
 }
 fn development_runtime() -> (
@@ -998,16 +1000,10 @@ fn unavailable_os_isolation_is_recorded_separately_and_discards_candidate() {
     let fixture = Fixture::new();
     let request = fixture.request("isolation-unavailable");
     let tier0 = request.admission.clone();
-    let (controller, gate) = development_runtime();
-    controller
-        .bind_admission(
-            &request,
-            "human-approval-1",
-            std::time::Duration::from_secs(60),
-        )
-        .unwrap();
+    let mut checks = Checks::all();
+    checks.isolation_ready = false;
     let mut host =
-        GitWorkspaceHost::new(&fixture.repo, &fixture.root, gate, Journal::default()).unwrap();
+        GitWorkspaceHost::new(&fixture.repo, &fixture.root, checks, Journal::default()).unwrap();
     let mut candidate = allocate(&request, &mut host).unwrap();
     candidate.activate(&mut host).unwrap();
     let result = mutate_and_verify(
@@ -1070,8 +1066,14 @@ fn durable_evidence_is_queryable_hash_chained_and_disjoint_from_candidate_and_ho
     let journal_path = fixture.base.join("evolution-state/evidence.jsonl");
     fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
     let journal = FileEvidenceJournal::open(&journal_path, &fixture.repo, &fixture.root).unwrap();
-    let mut host =
-        GitWorkspaceHost::new(&fixture.repo, &fixture.root, Checks::all(), journal).unwrap();
+    let mut host = GitWorkspaceHost::new_with_verifier(
+        &fixture.repo,
+        &fixture.root,
+        Checks::all(),
+        journal,
+        ScriptedTier1(Tier1Outcome::Passed),
+    )
+    .unwrap();
     let request = fixture.request("durable");
     let tier0 = request.admission.clone();
     let mut candidate = allocate(&request, &mut host).unwrap();
@@ -1130,4 +1132,153 @@ fn journal_lock_is_exclusive_and_corruption_is_rejected_without_append() {
     let before = fs::read(&journal_path).unwrap();
     assert!(FileEvidenceJournal::open(&journal_path, &fixture.repo, &fixture.root).is_err());
     assert_eq!(fs::read(&journal_path).unwrap(), before);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires prepared M0.16.5 host resources and exercises real Cargo in AppContainer"]
+fn production_supervisor_tier1_runs_all_stages_in_appcontainer_and_journals_decision() {
+    let _tier1_guard = REAL_TIER1_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    use maia_evolution_supervisor::mutation::Operation;
+
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("repo root")
+        .to_path_buf();
+    let parent_commit = run(&repository, &["rev-parse", "HEAD"]);
+    assert!(
+        run(&repository, &["status", "--porcelain=v1"]).is_empty(),
+        "canonical checkout must be clean"
+    );
+    let allowed_path = "apps/local-intelligence-host/src/lib.rs";
+    let source_path = repository.join(allowed_path);
+    let source = fs::read_to_string(&source_path).unwrap();
+    let expected_text = "/// Caller-supplied bounds keep the adapter deterministic and free of a hidden\n/// clock. The host supplies its real observation window and current time.";
+    let replacement_text = "/// Caller-supplied bounds keep the adapter deterministic and free of a hidden\n/// clock. The host supplies its real observation window and current time.\n/// The fixed verifier runs with the prepared restricted host profile.";
+    assert_eq!(source.matches(expected_text).count(), 1);
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!(
+        "maia-m0165-production-{}-{nonce}",
+        std::process::id()
+    ));
+    let candidate_root = base.join("candidates");
+    fs::create_dir_all(&candidate_root).unwrap();
+    let journal_path = base.join("evidence/evolution.jsonl");
+    fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+    let journal = FileEvidenceJournal::open(&journal_path, &repository, &candidate_root).unwrap();
+
+    let plan = Plan {
+        generation_id: format!("m0165-generation-{nonce}"),
+        hypothesis_id: format!("m0165-hypothesis-{nonce}"),
+        objective_class: "restricted-runtime-integration".into(),
+        operator: "FUNCTION_REWRITE".into(),
+        semantic_fingerprint: "m0165-production-e2e-semantic".into(),
+        implementation_fingerprint: "m0165-production-e2e-implementation".into(),
+        profiling_fingerprint: "m0165-production-e2e-profile".into(),
+        evidence_refs: vec!["m0165-production-e2e".into()],
+        parent_id: "baseline".into(),
+        parent_snapshot_id: parent_commit.clone(),
+        parent_kind: ParentKind::KnownGoodBaseline,
+        proposed_paths: vec![allowed_path.into()],
+        proposed_symbols: vec![],
+        estimated_changed_lines: 2,
+        max_changed_lines: 3,
+        max_files: 1,
+    };
+    let request = Request {
+        admission: Decision {
+            outcome: Outcome::Admitted,
+            step: Step::ScratchStaticApply,
+            reason: None,
+            hypothesis_id: plan.hypothesis_id.clone(),
+            generation_id: plan.generation_id.clone(),
+            semantic_fingerprint: plan.semantic_fingerprint.clone(),
+            implementation_fingerprint: plan.implementation_fingerprint.clone(),
+            profiling_fingerprint: plan.profiling_fingerprint.clone(),
+            reservation_id: Some(format!("m0165-reservation-{nonce}")),
+            evidence_refs: plan.evidence_refs.clone(),
+        },
+        plan,
+        workspace_id: format!("m0165-workspace-{nonce}"),
+        parent_source_commit: parent_commit.clone(),
+        created_sequence: 1,
+    };
+    let approval = "m0165-host-qualified-test-approval";
+    let (controller, gate) = development_runtime();
+    controller
+        .bind_admission(&request, approval, std::time::Duration::from_secs(3600))
+        .unwrap();
+    let mut host = GitWorkspaceHost::new(&repository, &candidate_root, gate, journal).unwrap();
+    let mut candidate = allocate(&request, &mut host).unwrap();
+    candidate.activate(&mut host).unwrap();
+    let bytes = fs::read(
+        &candidate_root
+            .join(&request.workspace_id)
+            .join(allowed_path),
+    )
+    .unwrap();
+    let mutation = MutationRequest {
+        candidate_workspace_id: request.workspace_id.clone(),
+        generation_id: request.plan.generation_id.clone(),
+        hypothesis_id: request.plan.hypothesis_id.clone(),
+        approval_reference: approval.into(),
+        path: allowed_path.into(),
+        expected_sha256: format!("{:x}", sha2::Sha256::digest(&bytes)),
+        expected_text: expected_text.into(),
+        replacement_text: replacement_text.into(),
+        operation: Operation::FunctionRewrite,
+    };
+    let result = mutate_and_verify(&mut candidate, &request.admission, &mutation, &mut host);
+    assert_eq!(
+        result.state,
+        ResultState::Tier1Passed,
+        "production result: {result:?}"
+    );
+    assert_eq!(
+        candidate.state(),
+        State::Active,
+        "Tier-1 PASS does not promote"
+    );
+    assert_eq!(
+        result.tier1.as_ref().expect("Tier-1 evidence").checks.len(),
+        REQUIRED_TIER1_CHECKS.len()
+    );
+    assert!(
+        result
+            .tier1
+            .as_ref()
+            .expect("Tier-1 evidence")
+            .checks
+            .iter()
+            .all(|check| check.outcome == CheckOutcome::Passed),
+        "checks={:?}",
+        result.tier1.as_ref().expect("Tier-1 evidence").checks
+    );
+    assert_eq!(run(&repository, &["rev-parse", "HEAD"]), parent_commit);
+    assert!(run(&repository, &["status", "--porcelain=v1"]).is_empty());
+    drop(candidate);
+    drop(host);
+
+    let events = FileEvidenceJournal::read_events(&journal_path).unwrap();
+    assert!(events.iter().any(|event| {
+        event["kind"] == "mutation_attempt"
+            && event["workspace_id"] == request.workspace_id
+            && event["tier1"]["outcome"] == "PASSED"
+            && event["tier1"]["checks"]
+                .as_array()
+                .is_some_and(|checks| checks.len() == REQUIRED_TIER1_CHECKS.len())
+    }));
+    assert!(
+        !fs::read_to_string(&journal_path)
+            .unwrap()
+            .contains(replacement_text)
+    );
+    let _ = fs::remove_dir_all(&base);
 }

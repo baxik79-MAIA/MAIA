@@ -78,3 +78,36 @@ The original logs and system reports remain at their C:\MAIA\reports\desk_outbox
 - C: free space was 8767434752 bytes at 2026-09-30 07:14:50 UTC (measured once after validation, before commit). The 2026-09-29 figure in the prior R5V completion report is historical.
 - Worktree: C:\MAIA\public-export\.local\m0160-supervisor, branch codex/m0165-restricted-runtime. The C:\MAIA\repo public-release worktree contains unrelated existing changes and was left untouched.
 - No runtime binaries, vendor depot, local caches, credentials, or host snapshots are committed.
+
+## Production runtime integration attempt (2026-09-30)
+
+This section supersedes the earlier statement that production FixedCargoTier1Verifier still used Job-only containment. The worktree now calls the AppContainer runner from the production verifier and uses the host resource registration installed by ops/evolution-workspace-host/tools/m0165-r5v/Install-R5VHostResources.ps1. The installer revalidated the existing resources (Cargo SHA C37545EC61D48D31BDEFCE53280ECAB61C4EA54EAACE372FAC6A0316C6E165D9; vendor 388 packages and 388 checksums), staged the pinned Clippy compatibility runtime under %LOCALAPPDATA%\MAIA\RestrictedVerifierHost\resources\clippy-r5, staged Rustfmt under the corresponding rustfmt-r5 directory, and did not rebuild or copy the vendor depot. The installer is non-elevated.
+
+The focused production entry-point test was:
+cargo test --manifest-path ops/evolution-workspace-host/Cargo.toml --offline --test allocation allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline -- --nocapture
+
+It ran all four fixed verifier stages through GitWorkspaceHost and FixedCargoTier1Verifier. Rustfmt exited 0 in AppContainer after 164.2 seconds. Clippy exited 101 after 158.5 seconds, component check exited 101 after 160.1 seconds, and targeted tests exited 101 after 159.4 seconds. Each Cargo stage failed before compilation with Windows Access denied (os error 5) while trying to execute the staged clippy-driver.exe / host rustc.exe -vV. The complete test took 676.46 seconds and failed its Tier1Passed assertion. This is not a production E1-E3 PASS.
+
+For every observed process run, the root was created suspended, assigned to the configured Job before resume, and verified with the expected AppContainer SID and zero capability SIDs. The Job was observed empty after root exit, including when Cargo returned 101. Temporary ACL restoration reported verified and the unique AppContainer profile deletion reported verified after each stage. The production runner does not change the NUL device descriptor. The production integration test did not reach the package compile/test workloads, did not run production network or protected-surface probes, and did not produce a durable journal result. The ignored production journal test remains unrun.
+
+An additional host-only rustc staging probe was rejected and reverted: a copied rustc.exe under per-user resources reported that directory as its inferred sysroot, and a no-dependency Cargo check then failed to find std. No such rustc copy remains staged or referenced. The production runner continues to use the pinned toolchain rustc path.
+
+### Updated scope and milestone status
+
+Scratch E1-E4 remain separate qualification results. Scratch E4 showed the selected loopback connection was denied and the tested filesystem reads/writes had the recorded outcomes. Production runtime currently proves root AppContainer identity, zero capability SIDs, Job membership and drain, and restoration after execution. It does not yet prove production no-network or protected-surface denial under a successful compiler run.
+
+M0.16.5 remains OPEN / BLOCKED. The current exact blocker is child-process creation from the production AppContainer: Cargo cannot execute the pinned Clippy driver and toolchain rustc because Windows reports access denied. That prevents production E1, E2, and E3 from completing and leaves production E4 and the durable Gate/approval journal result unverified. Do not label the milestone CLOSED_READY or start M0.16.6.
+
+### Production E2E follow-up (2026-09-30)
+
+The host adapter now also validates the two SHA256-pinned Rust runtime DLLs in the toolchain and temporarily grants read/execute on those exact files. It adds temporary traverse-only ACEs for immediate read-root parents, the candidate target parent, and their exact prior ACL snapshots are restored after the run. These ACL refinements were made after the earlier Cargo launch failure; they do not broaden the AppContainer token or grant network capability.
+
+The repeated production GitWorkspaceHost E2E completed Rustfmt with exit 0, then Clippy, component check, and targeted tests each exited 101. Each root process was attested in the AppContainer and Job, each Job drained to zero, and the host logged verified temporary ACL restoration and AppContainer profile cleanup. Total test duration was 717.53 seconds. The test rejected the candidate as Tier1Failed. Because production stdout/stderr are explicit NUL handles, the remaining Cargo 101 cause is not present in the durable evidence. Do not infer a specific compiler or filesystem error from the exit status.
+
+The allocation suite was adjusted so the unavailable-isolation case injects a deterministic false host capability, and the durable-journal mechanics test uses its existing scripted verifier. The real production verifier remains separately exercised by the E2E above; it still does not pass. Its journal assertion and all production E4 network/protected-surface probes remain unverified.
+
+M0.16.5 remains OPEN / BLOCKED. Production Tier-1 integration is wired and containment/cleanup are observed, but production E1-E3 fail with exit 101 and no diagnostic output; production E4 isolation outcomes and durable decision journaling have not been demonstrated. The scratch E1-E4 report remains evidence only for its own harness.
+
+### Host-side fixture control (2026-09-30)
+
+Using the same minimal allocation-test manifest, lockfile, pinned Cargo/Rust toolchain, offline vendor configuration and fixed command flags in the ordinary host context, cargo check exited 0 in 0.64 s. This rules out the synthetic manifest, lockfile and Cargo TOML as causes in the host context; it does not identify the remaining AppContainer-specific exit 101. Production child output remains NUL by design, so the exact restricted-token diagnostic is still unavailable.

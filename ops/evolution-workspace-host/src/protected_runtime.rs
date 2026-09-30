@@ -14,12 +14,6 @@ pub enum RuntimeProfile {
     DeploymentLocked,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Tier1IsolationCapability {
-    SameUserProcessTreeContained,
-    RestrictedIdentityNetworkAndFilesystem,
-}
-
 #[derive(Debug, Clone)]
 struct Admission {
     plan: Plan,
@@ -39,7 +33,6 @@ struct State {
     supervisor_identity: String,
     expected_supervisor_identity: String,
     supervisor_integrity: bool,
-    tier1_isolation: Tier1IsolationCapability,
     version: u64,
     admission: Option<Admission>,
 }
@@ -61,7 +54,6 @@ impl ProtectedRuntimeGate {
             supervisor_identity: String::new(),
             expected_supervisor_identity: supervisor_identity,
             supervisor_integrity: false,
-            tier1_isolation: Tier1IsolationCapability::SameUserProcessTreeContained,
             version: 1,
             admission: None,
         }));
@@ -284,9 +276,8 @@ impl Gate for ProtectedRuntimeGate {
     }
 
     fn tier1_isolation_ready(&mut self) -> Result<bool, PortError> {
-        let state = self.state()?;
-        Ok(state.tier1_isolation
-            == Tier1IsolationCapability::RestrictedIdentityNetworkAndFilesystem)
+        let _state = self.state()?;
+        Ok(crate::tier1::host_isolation_ready())
     }
 }
 
@@ -392,13 +383,26 @@ mod tests {
         assert!(!gate.admission_current(&request).unwrap());
     }
 
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "requires the prepared M0.16.5 restricted verifier host resources"]
+    fn prepared_host_proves_appcontainer_and_reversible_acl_capability() {
+        assert!(
+            crate::tier1::host_isolation_ready(),
+            "validated host resources, AppContainer profile, or reversible ACL probe unavailable"
+        );
+    }
+
     #[test]
     fn unknown_startup_runtime_state_is_closed_until_host_attests_it() {
         let (_, mut gate) = ProtectedRuntimeGate::new("supervisor-v1");
         assert!(!gate.supervisor_ready().unwrap());
         assert!(!gate.development_profile().unwrap());
         assert!(gate.cancellation_requested().unwrap());
-        assert!(!gate.tier1_isolation_ready().unwrap());
+        assert_eq!(
+            gate.tier1_isolation_ready().unwrap(),
+            crate::tier1::host_isolation_ready()
+        );
     }
 
     #[test]
@@ -412,7 +416,10 @@ mod tests {
     fn production_capability_defaults_closed_and_identity_drift_revokes_gate() {
         let request = request();
         let (controller, mut gate) = development_runtime();
-        assert!(!gate.tier1_isolation_ready().unwrap());
+        assert_eq!(
+            gate.tier1_isolation_ready().unwrap(),
+            crate::tier1::host_isolation_ready()
+        );
         controller
             .bind_admission(&request, "approval-1", Duration::from_secs(30))
             .unwrap();
