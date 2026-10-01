@@ -735,7 +735,7 @@ pub trait Tier1Verifier {
 }
 
 /// The verifier has a fixed package, command list, offline mode, isolated
-/// candidate target directory, null output, and a per-command wall bound.
+/// candidate target directory, bounded host-captured output, and a per-command wall bound.
 /// It cannot run candidate-supplied commands or access credentials through
 /// inherited environment variables outside the explicit toolchain allowlist.
 pub struct FixedCargoTier1Verifier;
@@ -783,14 +783,14 @@ impl Tier1Verifier for FixedCargoTier1Verifier {
         let checks = [
             (CheckKind::SyntaxStatic, None, "rustfmt-fixed-file"),
             (
-                CheckKind::FormattingLint,
-                Some(VerifierCommand::CargoClippyHostComponent),
-                "cargo-clippy",
-            ),
-            (
                 CheckKind::ComponentBuild,
                 Some(VerifierCommand::CargoCheckHostComponent),
                 "cargo-check",
+            ),
+            (
+                CheckKind::FormattingLint,
+                Some(VerifierCommand::CargoClippyHostComponent),
+                "cargo-clippy",
             ),
             (
                 CheckKind::TargetedTests,
