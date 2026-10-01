@@ -71,3 +71,9 @@ M0.16.5 remains OPEN / BLOCKED. Production Tier-1 integration is wired and conta
 ### Host-side fixture control (2026-09-30)
 
 Using the same minimal allocation-test manifest, lockfile, pinned Cargo/Rust toolchain, offline vendor configuration and fixed command flags in the ordinary host context, cargo check exited 0 in 0.64 s. This rules out the synthetic manifest, lockfile and Cargo TOML as causes in the host context; it does not identify the remaining AppContainer-specific exit 101. Production child output remains NUL by design, so the exact restricted-token diagnostic is still unavailable.
+
+## Production runner output capture follow-up (2026-10-01)
+
+The production `FixedCargoTier1Verifier` now stores bounded stdout/stderr per fixed command under the host-only `run-state/diagnostics/<run-id>/` directory. Each stream is drained concurrently and storage is capped at 256 KiB while excess output is discarded after draining. The host writes captures only after the restricted process tree exits and ACL/profile cleanup has been verified.
+
+The current prepared LAB host can run fixed Rustfmt in the AppContainer, but Clippy, component check, and tests fail before rustc starts: Cargo reports Windows error 5 when attempting the captured child launch (`rustc -vV`, never executed). This is a production Tier-1 failure and keeps the milestone OPEN / BLOCKED. The scratch E1-E4 results do not replace the production test. See `reports/evolution/M0_16_5_R5V_RUNTIME_REVIEW.md` for the current evidence and limits.

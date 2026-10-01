@@ -14,6 +14,16 @@ pub enum Completion {
     Cancelled,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedRun {
+    pub completion: Completion,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub cleanup_verified: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContainmentUnavailable;
 
@@ -74,7 +84,54 @@ pub fn run_restricted(
     timeout: Duration,
     cancelled: impl FnMut() -> bool,
 ) -> Result<Completion, ContainmentUnavailable> {
-    windows_job::run_restricted(
+    Ok(run_restricted_captured(
+        command,
+        toolchain_bin,
+        working_directory,
+        target_directory,
+        readonly_roots,
+        rustfmt_executable,
+        cargo_vendor,
+        rustfmt_config,
+        environment,
+        timeout,
+        cancelled,
+    )?
+    .completion)
+}
+
+#[cfg(not(windows))]
+pub fn run_restricted_captured(
+    _command: VerifierCommand,
+    _toolchain_bin: &Path,
+    _working_directory: &Path,
+    _target_directory: &Path,
+    _readonly_roots: &[std::path::PathBuf],
+    _rustfmt_executable: Option<&Path>,
+    _cargo_vendor: Option<&Path>,
+    _rustfmt_config: Option<&Path>,
+    _environment: &[(OsString, OsString)],
+    _timeout: Duration,
+    _cancelled: impl FnMut() -> bool,
+) -> Result<CapturedRun, ContainmentUnavailable> {
+    Err(ContainmentUnavailable)
+}
+
+#[cfg(windows)]
+pub fn run_restricted_captured(
+    command: VerifierCommand,
+    toolchain_bin: &Path,
+    working_directory: &Path,
+    target_directory: &Path,
+    readonly_roots: &[std::path::PathBuf],
+    rustfmt_executable: Option<&Path>,
+    cargo_vendor: Option<&Path>,
+    rustfmt_config: Option<&Path>,
+    environment: &[(OsString, OsString)],
+    timeout: Duration,
+    cancelled: impl FnMut() -> bool,
+) -> Result<CapturedRun, ContainmentUnavailable> {
+    windows_job::run_restricted_captured(
         command,
         toolchain_bin,
         working_directory,
@@ -105,18 +162,23 @@ mod windows_job {
     use super::*;
     use std::ffi::OsStr;
     use std::fs;
+    use std::io::Read;
     use std::iter;
     use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
     use std::ptr::{null, null_mut};
     use std::sync::{Mutex, OnceLock};
     use std::thread;
     use std::time::Instant;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GENERIC_READ, GENERIC_WRITE, GetLastError, WAIT_ABANDONED, WAIT_OBJECT_0,
+        CloseHandle, GENERIC_READ, GetLastError, HANDLE_FLAG_INHERIT, SetHandleInformation,
+        WAIT_ABANDONED, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::{
-        EqualSid, GetTokenInformation, SECURITY_ATTRIBUTES, TOKEN_APPCONTAINER_INFORMATION,
-        TOKEN_QUERY, TokenAppContainerSid, TokenCapabilities, TokenIsAppContainer,
+        ACL_REVISION, AddAccessAllowedAce, EqualSid, GetTokenInformation, InitializeAcl,
+        InitializeSecurityDescriptor, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+        SetSecurityDescriptorDacl, TOKEN_APPCONTAINER_INFORMATION, TOKEN_QUERY, TOKEN_USER,
+        TokenAppContainerSid, TokenCapabilities, TokenIsAppContainer, TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -134,6 +196,7 @@ mod windows_job {
         JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
         TerminateJobObject,
     };
+    use windows_sys::Win32::System::Pipes::CreatePipe;
     use windows_sys::Win32::System::SystemServices::{
         JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT, JOB_OBJECT_MSG_JOB_MEMORY_LIMIT,
         JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT,
@@ -141,9 +204,10 @@ mod windows_job {
     use windows_sys::Win32::System::Threading::{
         CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateMutexW,
         CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
-        GetExitCodeProcess, InitializeProcThreadAttributeList, OpenProcessToken,
+        GetCurrentProcess, GetExitCodeProcess, InitializeProcThreadAttributeList, OpenProcessToken,
         PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, ReleaseMutex, ResumeThread,
-        STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+        WaitForSingleObject,
     };
 
     struct Handles(Vec<*mut core::ffi::c_void>);
@@ -154,6 +218,65 @@ mod windows_job {
                     unsafe { CloseHandle(handle) };
                 }
             }
+        }
+    }
+
+    pub(super) const CAPTURE_LIMIT: usize = 256 * 1024;
+    type Reader = thread::JoinHandle<(Vec<u8>, bool)>;
+    struct ReaderSet(Option<(Reader, Reader)>);
+    impl Drop for ReaderSet {
+        fn drop(&mut self) {
+            if let Some((stdout, stderr)) = self.0.take() {
+                let _ = stdout.join();
+                let _ = stderr.join();
+            }
+        }
+    }
+    fn start_reader(handle: *mut core::ffi::c_void) -> Reader {
+        let handle = handle as usize;
+        thread::spawn(move || {
+            let mut file =
+                unsafe { std::fs::File::from_raw_handle(handle as *mut core::ffi::c_void) };
+            let mut kept = Vec::with_capacity(CAPTURE_LIMIT.min(16 * 1024));
+            let mut truncated = false;
+            let mut chunk = [0u8; 16 * 1024];
+            loop {
+                match file.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        let remaining = CAPTURE_LIMIT.saturating_sub(kept.len());
+                        let take = remaining.min(count);
+                        kept.extend_from_slice(&chunk[..take]);
+                        truncated |= take != count;
+                    }
+                }
+            }
+            (kept, truncated)
+        })
+    }
+    fn join_capture(completion: Completion, stdout: Reader, stderr: Reader) -> CapturedRun {
+        let (stdout, stdout_truncated) = stdout.join().unwrap_or_default();
+        let (stderr, stderr_truncated) = stderr.join().unwrap_or_default();
+        CapturedRun {
+            completion,
+            stdout,
+            stderr,
+            stdout_truncated,
+            stderr_truncated,
+            cleanup_verified: true,
+        }
+    }
+    fn finish_capture(completion: Completion, readers: &mut ReaderSet) -> CapturedRun {
+        match readers.0.take() {
+            Some((stdout, stderr)) => join_capture(completion, stdout, stderr),
+            None => CapturedRun {
+                completion,
+                stdout: vec![],
+                stderr: vec![],
+                stdout_truncated: false,
+                stderr_truncated: false,
+                cleanup_verified: true,
+            },
         }
     }
 
@@ -502,9 +625,10 @@ mod windows_job {
             cancelled,
             false,
         )
+        .map(|run| run.completion)
     }
 
-    pub fn run_restricted(
+    pub fn run_restricted_captured(
         command: VerifierCommand,
         toolchain_bin: &Path,
         working_directory: &Path,
@@ -516,7 +640,7 @@ mod windows_job {
         environment: &[(OsString, OsString)],
         timeout: Duration,
         cancelled: impl FnMut() -> bool,
-    ) -> Result<Completion, ContainmentUnavailable> {
+    ) -> Result<CapturedRun, ContainmentUnavailable> {
         run_mode(
             command,
             toolchain_bin,
@@ -546,7 +670,7 @@ mod windows_job {
         timeout: Duration,
         cancelled: impl FnMut() -> bool,
         restricted: bool,
-    ) -> Result<Completion, ContainmentUnavailable> {
+    ) -> Result<CapturedRun, ContainmentUnavailable> {
         if !toolchain_bin.is_absolute()
             || !working_directory.is_absolute()
             || !fs::canonicalize(working_directory)
@@ -674,6 +798,14 @@ mod windows_job {
                 timeout.min(Duration::from_secs(900)),
                 cancelled,
             )
+            .map(|completion| CapturedRun {
+                completion,
+                stdout: vec![],
+                stderr: vec![],
+                stdout_truncated: false,
+                stderr_truncated: false,
+                cleanup_verified: true,
+            })
         }
     }
 
@@ -686,7 +818,7 @@ mod windows_job {
         environment: &[(OsString, OsString)],
         timeout: Duration,
         cancelled: impl FnMut() -> bool,
-    ) -> Result<Completion, ContainmentUnavailable> {
+    ) -> Result<CapturedRun, ContainmentUnavailable> {
         static ACL_SLOT: OnceLock<Mutex<()>> = OnceLock::new();
         let _acl_slot = ACL_SLOT
             .get_or_init(|| Mutex::new(()))
@@ -695,6 +827,7 @@ mod windows_job {
         let mut profile = super::windows_restricted::AppContainerProfile::create()
             .map_err(|_| ContainmentUnavailable)?;
         let mut acl = super::windows_restricted::TemporaryAclGrants::new();
+        let mut traversal_paths = std::collections::HashSet::new();
         for path in readonly_roots {
             if acl.grant_read(path, profile.sid()).is_err() {
                 eprintln!(
@@ -743,30 +876,7 @@ mod windows_job {
         }
         executable_files.sort();
         executable_files.dedup();
-        let mut traversal_paths = std::collections::HashSet::new();
-        if let Some(parent) = target_directory.parent() {
-            if traversal_paths.insert(parent.to_owned())
-                && acl.grant_traverse(parent, profile.sid()).is_err()
-            {
-                eprintln!(
-                    "Tier-1 host ACL setup failed: candidate target-parent traversal grant on {}",
-                    parent.display()
-                );
-                return Err(ContainmentUnavailable);
-            }
-        }
         for root in readonly_roots {
-            if let Some(parent) = root.parent() {
-                if traversal_paths.insert(parent.to_owned())
-                    && acl.grant_traverse(parent, profile.sid()).is_err()
-                {
-                    eprintln!(
-                        "Tier-1 host ACL setup failed: read-root parent traversal grant on {}",
-                        parent.display()
-                    );
-                    return Err(ContainmentUnavailable);
-                }
-            }
             if root
                 .to_string_lossy()
                 .to_ascii_lowercase()
@@ -794,20 +904,24 @@ mod windows_job {
                 }
             }
         }
-        for executable in &executable_files {
-            if let Some(parent) = executable.parent() {
-                if readonly_roots
-                    .iter()
-                    .any(|root| parent != root && parent.starts_with(root))
-                    && traversal_paths.insert(parent.to_owned())
-                    && acl.grant_traverse(parent, profile.sid()).is_err()
-                {
-                    eprintln!(
-                        "Tier-1 host ACL setup failed: executable-directory traversal grant on {}",
-                        parent.display()
-                    );
-                    return Err(ContainmentUnavailable);
-                }
+        if let Some(parent) = readonly_roots.iter().find_map(|root| {
+            root.ancestors()
+                .find(|part| {
+                    part.file_name().is_some_and(|name| {
+                        name.to_string_lossy()
+                            .eq_ignore_ascii_case("restricted-verifier-depot")
+                    })
+                })
+                .and_then(Path::parent)
+        }) {
+            if traversal_paths.insert(parent.to_owned())
+                && acl.grant_traverse(parent, profile.sid()).is_err()
+            {
+                eprintln!(
+                    "Tier-1 host ACL setup failed: depot-parent traverse-only grant on {}",
+                    parent.display()
+                );
+                return Err(ContainmentUnavailable);
             }
         }
         for path in executable_files {
@@ -853,10 +967,13 @@ mod windows_job {
                 "FAILED"
             }
         );
-        if acl_result.is_err() || profile_result.is_err() {
-            return Err(ContainmentUnavailable);
+        match run_result {
+            Ok(mut captured) => {
+                captured.cleanup_verified = acl_result.is_ok() && profile_result.is_ok();
+                Ok(captured)
+            }
+            Err(error) => Err(error),
         }
-        run_result
     }
 
     pub(super) fn run_process(
@@ -876,9 +993,10 @@ mod windows_job {
             cancelled,
             None,
         )
+        .map(|run| run.completion)
     }
 
-    fn run_process_with_security(
+    pub(super) fn run_process_with_security(
         program: &Path,
         arguments: &[String],
         working_directory: &Path,
@@ -886,7 +1004,8 @@ mod windows_job {
         timeout: Duration,
         mut cancelled: impl FnMut() -> bool,
         security: Option<&windows_sys::Win32::Security::SECURITY_CAPABILITIES>,
-    ) -> Result<Completion, ContainmentUnavailable> {
+    ) -> Result<CapturedRun, ContainmentUnavailable> {
+        let mut readers = ReaderSet(None);
         static VERIFIER_SLOT: OnceLock<Mutex<()>> = OnceLock::new();
         let _slot = VERIFIER_SLOT
             .get_or_init(|| Mutex::new(()))
@@ -994,9 +1113,89 @@ mod windows_job {
             String::from_utf16_lossy(&cwd[..cwd.len() - 1]),
             String::from_utf16_lossy(&env_block[..first_env])
         );
+        let mut pipe_acl_storage = [0usize; 16];
+        let pipe_acl = pipe_acl_storage
+            .as_mut_ptr()
+            .cast::<windows_sys::Win32::Security::ACL>();
+        let mut pipe_descriptor = SECURITY_DESCRIPTOR::default();
+        let mut host_user_storage: Vec<usize>;
+        let pipe_security = if let Some(security) = security {
+            let mut host_token = null_mut();
+            if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut host_token) } == 0 {
+                eprintln!(
+                    "Tier-1 host token open for pipe ACL failed: Win32 {}",
+                    unsafe { GetLastError() }
+                );
+                return Err(ContainmentUnavailable);
+            }
+            let mut host_user_bytes = 0u32;
+            unsafe {
+                GetTokenInformation(host_token, TokenUser, null_mut(), 0, &mut host_user_bytes);
+            }
+            host_user_storage =
+                vec![0usize; (host_user_bytes as usize).div_ceil(std::mem::size_of::<usize>())];
+            let host_user_ok = host_user_bytes >= std::mem::size_of::<TOKEN_USER>() as u32
+                && unsafe {
+                    GetTokenInformation(
+                        host_token,
+                        TokenUser,
+                        host_user_storage.as_mut_ptr().cast(),
+                        host_user_bytes,
+                        &mut host_user_bytes,
+                    ) != 0
+                };
+            unsafe { CloseHandle(host_token) };
+            if !host_user_ok {
+                eprintln!(
+                    "Tier-1 host user SID query for pipe ACL failed: Win32 {}",
+                    unsafe { GetLastError() }
+                );
+                return Err(ContainmentUnavailable);
+            }
+            let host_user = host_user_storage.as_mut_ptr().cast::<TOKEN_USER>();
+            let host_sid = unsafe { (*host_user).User.Sid };
+            let acl_ok = unsafe {
+                InitializeAcl(
+                    pipe_acl,
+                    std::mem::size_of_val(&pipe_acl_storage) as u32,
+                    ACL_REVISION,
+                ) != 0
+                    && AddAccessAllowedAce(
+                        pipe_acl,
+                        ACL_REVISION,
+                        GENERIC_READ | windows_sys::Win32::Foundation::GENERIC_WRITE,
+                        host_sid,
+                    ) != 0
+                    && AddAccessAllowedAce(
+                        pipe_acl,
+                        ACL_REVISION,
+                        GENERIC_READ | windows_sys::Win32::Foundation::GENERIC_WRITE,
+                        security.AppContainerSid,
+                    ) != 0
+                    && InitializeSecurityDescriptor(
+                        (&mut pipe_descriptor as *mut SECURITY_DESCRIPTOR).cast(),
+                        windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION,
+                    ) != 0
+                    && SetSecurityDescriptorDacl(
+                        (&mut pipe_descriptor as *mut SECURITY_DESCRIPTOR).cast(),
+                        1,
+                        pipe_acl,
+                        0,
+                    ) != 0
+            };
+            if !acl_ok {
+                eprintln!("Tier-1 pipe ACL setup failed: Win32 {}", unsafe {
+                    GetLastError()
+                });
+                return Err(ContainmentUnavailable);
+            }
+            &mut pipe_descriptor as *mut SECURITY_DESCRIPTOR as *mut _
+        } else {
+            null_mut()
+        };
         let stdio_security = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: null_mut(),
+            lpSecurityDescriptor: pipe_security,
             bInheritHandle: 1,
         };
         let nul = wide(OsStr::new("NUL"));
@@ -1011,40 +1210,66 @@ mod windows_job {
                 null_mut(),
             )
         };
-        let stdout = unsafe {
-            CreateFileW(
-                nul.as_ptr(),
-                GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                &stdio_security,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                null_mut(),
-            )
-        };
-        let stderr = unsafe {
-            CreateFileW(
-                nul.as_ptr(),
-                GENERIC_WRITE,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                &stdio_security,
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                null_mut(),
-            )
-        };
-        if stdin == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE
-            || stdout == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE
-            || stderr == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE
+        let mut stdout_read = null_mut();
+        let mut stdout = null_mut();
+        let mut stderr_read = null_mut();
+        let mut stderr = null_mut();
+        let stdout_pipe = unsafe { CreatePipe(&mut stdout_read, &mut stdout, &stdio_security, 0) };
+        if stdout_pipe == 0 {
+            eprintln!("Tier-1 stdout CreatePipe failed: Win32 {}", unsafe {
+                GetLastError()
+            });
+        }
+        let stderr_pipe = unsafe { CreatePipe(&mut stderr_read, &mut stderr, &stdio_security, 0) };
+        if stderr_pipe == 0 {
+            eprintln!("Tier-1 stderr CreatePipe failed: Win32 {}", unsafe {
+                GetLastError()
+            });
+        }
+        let stdout_read_inherit =
+            unsafe { SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0) };
+        let stderr_read_inherit =
+            unsafe { SetHandleInformation(stderr_read, HANDLE_FLAG_INHERIT, 0) };
+        if stdout_pipe == 0
+            || stderr_pipe == 0
+            || stdout_read_inherit == 0
+            || stderr_read_inherit == 0
         {
+            if stdout_read_inherit == 0 || stderr_read_inherit == 0 {
+                eprintln!(
+                    "Tier-1 pipe inheritability setup failed: Win32 {}",
+                    unsafe { GetLastError() }
+                );
+            }
+            let mut owned = vec![stdin, stdout_read, stdout, stderr_read, stderr];
+            for handle in owned.drain(..) {
+                if !handle.is_null()
+                    && handle != windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE
+                {
+                    unsafe { CloseHandle(handle) };
+                }
+            }
+            return Err(ContainmentUnavailable);
+        }
+        if stdin == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            eprintln!("Tier-1 NUL stdin open failed: Win32 {}", unsafe {
+                GetLastError()
+            });
+            unsafe {
+                CloseHandle(stdout_read);
+                CloseHandle(stdout);
+                CloseHandle(stderr_read);
+                CloseHandle(stderr);
+            }
             return Err(ContainmentUnavailable);
         }
         if cancelled() {
-            return Ok(Completion::Cancelled);
+            return Ok(finish_capture(Completion::Cancelled, &mut readers));
         }
         let standard_handles = [stdin, stdout, stderr];
         let inherited_handles = Handles(standard_handles.to_vec());
-        eprintln!("Tier-1 process runner: explicit NUL handles opened");
+        let mut reader_handles = Handles(vec![stdout_read, stderr_read]);
+        eprintln!("Tier-1 process runner: stdin NUL and separate output pipes opened");
         let mut attributes =
             AttributeList::with_handle_list(&standard_handles, security).map_err(|_| {
                 eprintln!(
@@ -1094,7 +1319,10 @@ mod windows_job {
         drop(inherited_handles);
         let child_handles = Handles(vec![process.hProcess, process.hThread]);
         if unsafe { AssignProcessToJobObject(job, process.hProcess) } == 0 {
+            unsafe { TerminateProcess(process.hProcess, 1) };
+            unsafe { WaitForSingleObject(process.hProcess, 10_000) };
             let _ = terminate_job_and_wait(job, 1);
+            drop(child_handles);
             return Err(ContainmentUnavailable);
         }
         if let Some(security) = security {
@@ -1103,13 +1331,17 @@ mod windows_job {
                 return Err(ContainmentUnavailable);
             }
         }
+        let stdout_reader = start_reader(reader_handles.0.remove(0));
+        let stderr_reader = start_reader(reader_handles.0.remove(0));
+        readers.0 = Some((stdout_reader, stderr_reader));
         if cancelled() {
             terminate_job_and_wait(job, 2)?;
             drop(child_handles);
-            return Ok(Completion::Cancelled);
+            return Ok(finish_capture(Completion::Cancelled, &mut readers));
         }
         if unsafe { ResumeThread(process.hThread) } == u32::MAX {
             let _ = terminate_job_and_wait(job, 1);
+            let _ = finish_capture(Completion::ResourceLimit, &mut readers);
             return Err(ContainmentUnavailable);
         }
         eprintln!("Tier-1 process runner: resumed");
@@ -1118,19 +1350,19 @@ mod windows_job {
             if cancelled() {
                 terminate_job_and_wait(job, 2)?;
                 drop(child_handles);
-                return Ok(Completion::Cancelled);
+                return Ok(finish_capture(Completion::Cancelled, &mut readers));
             }
             if started.elapsed() >= timeout {
                 terminate_job_and_wait(job, 3)?;
                 drop(child_handles);
-                return Ok(Completion::TimedOut);
+                return Ok(finish_capture(Completion::TimedOut, &mut readers));
             }
             let wait_status = unsafe { WaitForSingleObject(process.hProcess, 20) };
             if wait_status == WAIT_OBJECT_0 {
                 if resource_limit_notification(completion_port)? {
                     terminate_job_and_wait(job, 4)?;
                     drop(child_handles);
-                    return Ok(Completion::ResourceLimit);
+                    return Ok(finish_capture(Completion::ResourceLimit, &mut readers));
                 }
                 let mut exit = 1u32;
                 if unsafe { GetExitCodeProcess(process.hProcess, &mut exit) } == 0 {
@@ -1138,12 +1370,13 @@ mod windows_job {
                         GetLastError()
                     });
                     let _ = terminate_job_and_wait(job, 1);
+                    let _ = finish_capture(Completion::ResourceLimit, &mut readers);
                     return Err(ContainmentUnavailable);
                 }
                 if matches!(exit, 0xC000_012D | 0xC000_0017) {
                     terminate_job_and_wait(job, 4)?;
                     drop(child_handles);
-                    return Ok(Completion::ResourceLimit);
+                    return Ok(finish_capture(Completion::ResourceLimit, &mut readers));
                 }
                 eprintln!(
                     "Tier-1 root process exited with {exit}; active Job processes={:?}",
@@ -1152,19 +1385,23 @@ mod windows_job {
                 terminate_job_and_wait(job, exit)?;
                 eprintln!("Tier-1 Job Object is empty after root exit");
                 drop(child_handles);
-                return Ok(Completion::Exited(exit as i32));
+                return Ok(finish_capture(
+                    Completion::Exited(exit as i32),
+                    &mut readers,
+                ));
             }
             if wait_status == u32::MAX {
                 eprintln!("Tier-1 process wait failed: Win32 {}", unsafe {
                     GetLastError()
                 });
                 let _ = terminate_job_and_wait(job, 1);
+                let _ = finish_capture(Completion::ResourceLimit, &mut readers);
                 return Err(ContainmentUnavailable);
             }
             if resource_limit_notification(completion_port)? {
                 terminate_job_and_wait(job, 4)?;
                 drop(child_handles);
-                return Ok(Completion::ResourceLimit);
+                return Ok(finish_capture(Completion::ResourceLimit, &mut readers));
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -1207,6 +1444,17 @@ mod tests {
             }
         }
         if mode == "exit" {
+            return;
+        }
+        if mode == "emit-output" {
+            use std::io::Write;
+            std::io::stdout().write_all(b"stdout-begin\n").unwrap();
+            std::io::stderr().write_all(b"stderr-begin\n").unwrap();
+            let block = vec![b'x'; super::windows_job::CAPTURE_LIMIT + 4096];
+            std::io::stdout().write_all(&block).unwrap();
+            std::io::stderr().write_all(&block).unwrap();
+            std::io::stdout().write_all(b"\nstdout-end\n").unwrap();
+            std::io::stderr().write_all(b"\nstderr-end\n").unwrap();
             return;
         }
         if matches!(mode.as_str(), "spawn-and-sleep" | "spawn-and-exit") {
@@ -1375,6 +1623,39 @@ mod tests {
             run_helper("exit", None, Duration::from_secs(10), || true).expect("containment"),
             Completion::Cancelled
         );
+    }
+
+    #[test]
+    fn captures_both_streams_with_bounded_storage_and_drains_overflow() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut environment = ["PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP"]
+            .into_iter()
+            .filter_map(|key| std::env::var_os(key).map(|v| (key.into(), v)))
+            .collect::<Vec<_>>();
+        environment.push((OsString::from(HELPER_MODE), OsString::from("emit-output")));
+        let run = super::windows_job::run_process_with_security(
+            &std::env::current_exe().unwrap(),
+            &[
+                "--exact".into(),
+                "tests::contained_process_tree_helper".into(),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
+            &std::env::temp_dir(),
+            &environment,
+            Duration::from_secs(10),
+            || false,
+            None,
+        )
+        .expect("captured process");
+        assert_eq!(run.completion, Completion::Exited(0));
+        assert!(run.stdout.windows(13).any(|v| v == b"stdout-begin\n"));
+        assert!(run.stderr.windows(13).any(|v| v == b"stderr-begin\n"));
+        assert_eq!(run.stdout.len(), super::windows_job::CAPTURE_LIMIT);
+        assert_eq!(run.stderr.len(), super::windows_job::CAPTURE_LIMIT);
+        assert!(run.stdout_truncated && run.stderr_truncated);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Fixed, offline Tier 1 Cargo verification for the single M0.16.3 surface.
 //! Candidate data cannot select executables, packages, arguments, or cwd.
-use maia_evolution_process_host::{Completion, VerifierCommand, run_restricted};
+use maia_evolution_process_host::{
+    CapturedRun, Completion, VerifierCommand, run_restricted_captured,
+};
 use maia_evolution_supervisor::mutation::{
     CheckEvidence, CheckKind, CheckOutcome, PortFailure, Tier1Evidence, Tier1Outcome,
 };
@@ -591,7 +593,7 @@ fn run(
     };
     eprintln!("Tier-1 {label}: start (offline AppContainer; limit 900s)");
     let started = std::time::Instant::now();
-    let result = run_restricted(
+    let result = run_restricted_captured(
         command,
         &resources.toolchain_bin,
         root,
@@ -609,11 +611,20 @@ fn run(
         started.elapsed().as_secs_f32()
     );
     match result {
-        Ok(Completion::Exited(0)) => CommandResult::Passed,
-        Ok(Completion::Exited(code)) => CommandResult::Failed(code),
-        Ok(Completion::ResourceLimit) => CommandResult::ResourceLimit,
-        Ok(Completion::TimedOut) => CommandResult::ResourceLimit,
-        Ok(Completion::Cancelled) => CommandResult::Cancelled,
+        Ok(captured) => {
+            if persist_diagnostics(resources, config, label, &captured).is_err() {
+                return CommandResult::Infrastructure;
+            }
+            if !captured.cleanup_verified {
+                return CommandResult::Infrastructure;
+            }
+            match captured.completion {
+                Completion::Exited(0) => CommandResult::Passed,
+                Completion::Exited(code) => CommandResult::Failed(code),
+                Completion::ResourceLimit | Completion::TimedOut => CommandResult::ResourceLimit,
+                Completion::Cancelled => CommandResult::Cancelled,
+            }
+        }
         Err(_) => CommandResult::Infrastructure,
     }
 }
@@ -633,7 +644,7 @@ fn run_rustfmt(
     readonly.push(config.directory.clone());
     eprintln!("Tier-1 Rustfmt: start (AppContainer; limit 900s)");
     let started = std::time::Instant::now();
-    let result = run_restricted(
+    let result = run_restricted_captured(
         VerifierCommand::RustfmtAllowlistedSource,
         &resources.toolchain_bin,
         root,
@@ -651,12 +662,54 @@ fn run_rustfmt(
         started.elapsed().as_secs_f32()
     );
     match result {
-        Ok(Completion::Exited(0)) => CommandResult::Passed,
-        Ok(Completion::Exited(code)) => CommandResult::Failed(code),
-        Ok(Completion::ResourceLimit | Completion::TimedOut) => CommandResult::ResourceLimit,
-        Ok(Completion::Cancelled) => CommandResult::Cancelled,
+        Ok(captured) => {
+            if persist_diagnostics(resources, config, "Rustfmt", &captured).is_err() {
+                return CommandResult::Infrastructure;
+            }
+            if !captured.cleanup_verified {
+                return CommandResult::Infrastructure;
+            }
+            match captured.completion {
+                Completion::Exited(0) => CommandResult::Passed,
+                Completion::Exited(code) => CommandResult::Failed(code),
+                Completion::ResourceLimit | Completion::TimedOut => CommandResult::ResourceLimit,
+                Completion::Cancelled => CommandResult::Cancelled,
+            }
+        }
         Err(_) => CommandResult::Infrastructure,
     }
+}
+
+fn persist_diagnostics(
+    resources: &HostResources,
+    config: &ConfigSnapshot,
+    stage: &str,
+    run: &CapturedRun,
+) -> std::io::Result<()> {
+    let run_name = config
+        .directory
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("missing verifier run id"))?;
+    let directory = resources.run_state_root.join("diagnostics").join(run_name);
+    std::fs::create_dir_all(&directory)?;
+    let slug = stage.to_ascii_lowercase().replace(' ', "-");
+    std::fs::write(directory.join(format!("{slug}.stdout.bin")), &run.stdout)?;
+    std::fs::write(directory.join(format!("{slug}.stderr.bin")), &run.stderr)?;
+    let metadata = format!(
+        "completion={:?}\ncleanup_verified={}\nstdout_bytes={}\nstderr_bytes={}\nstdout_truncated={}\nstderr_truncated={}\n",
+        run.completion,
+        run.cleanup_verified,
+        run.stdout.len(),
+        run.stderr.len(),
+        run.stdout_truncated,
+        run.stderr_truncated
+    );
+    std::fs::write(directory.join(format!("{slug}.meta.txt")), metadata)?;
+    eprintln!(
+        "Tier-1 {stage}: host-captured diagnostics={} (outside candidate ACL)",
+        directory.display()
+    );
+    Ok(())
 }
 
 pub trait Tier1Verifier {

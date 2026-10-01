@@ -111,3 +111,42 @@ M0.16.5 remains OPEN / BLOCKED. Production Tier-1 integration is wired and conta
 ### Host-side fixture control (2026-09-30)
 
 Using the same minimal allocation-test manifest, lockfile, pinned Cargo/Rust toolchain, offline vendor configuration and fixed command flags in the ordinary host context, cargo check exited 0 in 0.64 s. This rules out the synthetic manifest, lockfile and Cargo TOML as causes in the host context; it does not identify the remaining AppContainer-specific exit 101. Production child output remains NUL by design, so the exact restricted-token diagnostic is still unavailable.
+
+## Production follow-up from checkpoint 6caf8b5 (2026-10-01)
+
+This follow-up supersedes the earlier snapshot above wherever it described the current production runner. `FixedCargoTier1Verifier` now calls the restricted AppContainer/Job runner and host-captures stdout/stderr. The fixed worker remains closed on any failed check; no weakened profile or alternate command was enabled.
+
+### Captured production result
+
+The real production-entry integration test `allowed_candidate_mutation_runs_tier1_and_does_not_promote_or_touch_baseline` was run serially with the prepared host resources. It invoked the actual supervisor mutation path and ran all four fixed Tier-1 stages:
+
+| Stage | Result | Evidence |
+|---|---|---|
+| Rustfmt | exit 0 | AppContainer root resumed only after Job assignment; capture completed; ACL restoration and profile cleanup verified |
+| Clippy | exit 101 | stderr: Cargo could not execute `clippy-driver.exe ... rustc.exe -vV` (never executed), Windows error 5, Access denied |
+| Component check | exit 101 | stderr: Cargo could not execute staged `rustc.exe -vV` (never executed), Windows error 5, Access denied |
+| Targeted tests | exit 101 | same `rustc.exe -vV` / Windows error 5 before rustc execution |
+| Protected surface integrity | passed | exact allowed candidate change was the only worktree change |
+
+Each process stage reported `cleanup_verified=true`; runner output confirms the Job was empty before return, and the host reported `temporary ACL restoration: verified` and `AppContainer profile cleanup: verified`. Rustfmt, Clippy, component-check and targeted-test captures are under `C:\MAIA\restricted-verifier-depot\run-state\diagnostics\13564-18da7b9923501d1c`, outside candidate ACLs. The component failure is independently preserved at `...\probe-520\component-build.stderr.bin` with metadata `Exited(101)`, 189 stderr bytes, no truncation, and `cleanup_verified=true`.
+
+The supervisor result was `Rejected` with `Tier1Failed`; the individual evidence was FormattingLint=Failed, ComponentBuild=Failed, TargetedTests=Failed, and ProtectedSurfaceIntegrity=Passed. The test's assertion expected a successful mutation and therefore the test process exited failed after recording that accurate rejection. This run is not E1-E3 PASS and does not close M0.16.5.
+
+### Diagnosis and boundary
+
+The original production diagnostic was unavailable because the host sent both streams to NUL. The runner now creates separate pipes with a host-user and per-run AppContainer SID DACL, passes only stdin/stdout/stderr through the process attribute handle list, closes parent writer copies after process creation, drains both pipes concurrently, retains at most 256 KiB per stream while continuing to drain, and joins the readers after the Job becomes empty. Captures are persisted by the host outside the candidate workspace. The fixed Rustfmt command now passes through this path.
+
+A focused AppContainer helper probe showed that `CreatePipe` itself succeeds inside the AppContainer, while `std::process::Command::output()` attempting a child with captured streams returns `Access denied (os error 5)`. This narrows the failure to Rust's captured-child launch/standard-handle path; it does not identify which internal Win32 call in `std::process` returns error 5. A one-off token-default-DACL adjustment did not resolve the Cargo run and was removed. No broad ACL, AppContainer capability, network, or candidate-write grant was added. Do not claim a more specific kernel cause until the failing child launch can be isolated further.
+
+### Verification and status
+
+- `maia-evolution-process-host`: all 11 unit tests passed, including simultaneous stdout/stderr capture over the storage limit, timeout and cancellation with descendants, and exact nested ACL restoration.
+- `maia-evolution-workspace-host` library tests: 7 passed, 1 ignored (prepared host required).
+- Allocation integration tests excluding the two long cases: 19 passed, 1 ignored, 2 filtered. The production-entry case was then run alone and exercised the actual supervisor as described above; it failed its PASS expectation with the captured Tier-1 rejection. The durable journal test was run separately and passed (synthetic Tier-1 verifier), confirming queryability/hash-chain/disjointness for that adapter path; it does not verify a durable journal record from the production AppContainer run.
+- `cargo check --offline` passed for both host crates. A local `cargo clippy --all-targets -- -D warnings` exploration is not an E1 result and reported existing host-crate lints including `too_many_arguments` and `collapsible_if`; it did not run the restricted candidate command.
+- Production durable-journal verification and the explicit E4 network/protected-surface adversarial probes remain unverified. Scratch E4 evidence remains scoped to its own launcher and is not substituted for these checks.
+- System changes from the completed production run were restored: all three process stages report exact ACL restoration and AppContainer profile cleanup; exact nested-DACL restore tests passed. No DeskBridge action was performed.
+
+**Current verdict: OPEN / BLOCKED, not CLOSED_READY.** The concrete remaining blocker is the repeated Windows error 5 when Cargo/Clippy's child process is launched with captured stdout/stderr inside the AppContainer. It prevents Clippy, component check, and targeted tests from executing their rustc child, so the production Tier-1 verdict is rejection. E4 durable journal and adversarial isolation acceptance have not been established. M0.16.6 was not started.
+
+Disk measurement: C: had 3,195,781,120 bytes free at approximately 2026-10-01 18:53 UTC (20:53 Europe/Warsaw). Worktree: `C:\MAIA\public-export\.local\m0160-supervisor`; branch `codex/m0165-restricted-runtime`; starting HEAD `6caf8b55df5ed51c26287329b7971002e3b46211`.

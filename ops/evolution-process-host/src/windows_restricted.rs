@@ -4,9 +4,8 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Security::Authorization::{
-    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, NO_MULTIPLE_TRUSTEE, REVOKE_ACCESS,
-    SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
-    TRUSTEE_W,
+    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT,
+    SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile,
@@ -92,10 +91,8 @@ impl Drop for AppContainerProfile {
 
 struct AclSnapshot {
     path: Vec<u16>,
-    package_sid: *mut core::ffi::c_void,
     original_acl: Vec<usize>,
     original_acl_bytes: usize,
-    original_present: bool,
 }
 
 pub(super) struct TemporaryAclGrants {
@@ -247,10 +244,8 @@ impl TemporaryAclGrants {
         }
         self.snapshots.push(AclSnapshot {
             path: name,
-            package_sid: sid,
             original_acl,
             original_acl_bytes: acl_size,
-            original_present: true,
         });
         Ok(())
     }
@@ -259,6 +254,12 @@ impl TemporaryAclGrants {
         let mut failed = Vec::new();
         while let Some(snapshot) = self.snapshots.pop() {
             if restore_snapshot(&snapshot).is_err() {
+                eprintln!(
+                    "Tier-1 ACL restore failed for {}",
+                    String::from_utf16_lossy(
+                        &snapshot.path[..snapshot.path.len().saturating_sub(1)]
+                    )
+                );
                 failed.push(snapshot);
             }
         }
@@ -283,48 +284,7 @@ impl Drop for TemporaryAclGrants {
 }
 
 fn restore_snapshot(snapshot: &AclSnapshot) -> Result<(), ()> {
-    let mut current_dacl = std::ptr::null_mut();
-    let mut descriptor = std::ptr::null_mut();
-    let status = unsafe {
-        GetNamedSecurityInfoW(
-            snapshot.path.as_ptr(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut current_dacl,
-            std::ptr::null_mut(),
-            &mut descriptor,
-        )
-    };
-    if status != 0 || descriptor.is_null() || current_dacl.is_null() {
-        if !descriptor.is_null() {
-            unsafe { LocalFree(descriptor) };
-        }
-        return Err(());
-    }
-    let trustee = TRUSTEE_W {
-        pMultipleTrustee: std::ptr::null_mut(),
-        MultipleTrusteeOperation: NO_MULTIPLE_TRUSTEE,
-        TrusteeForm: TRUSTEE_IS_SID,
-        TrusteeType: TRUSTEE_IS_UNKNOWN,
-        ptstrName: snapshot.package_sid.cast(),
-    };
-    let entry = EXPLICIT_ACCESS_W {
-        grfAccessPermissions: u32::MAX,
-        grfAccessMode: REVOKE_ACCESS,
-        grfInheritance: 0,
-        Trustee: trustee,
-    };
-    let mut restored_acl = std::ptr::null_mut();
-    let acl_status = unsafe { SetEntriesInAclW(1, &entry, current_dacl, &mut restored_acl) };
-    if acl_status != 0 || restored_acl.is_null() {
-        unsafe { LocalFree(descriptor) };
-        if !restored_acl.is_null() {
-            unsafe { LocalFree(restored_acl.cast()) };
-        }
-        return Err(());
-    }
+    let original_dacl = snapshot.original_acl.as_ptr().cast_mut().cast();
     let set_status = unsafe {
         SetNamedSecurityInfoW(
             snapshot.path.as_ptr(),
@@ -332,14 +292,10 @@ fn restore_snapshot(snapshot: &AclSnapshot) -> Result<(), ()> {
             DACL_SECURITY_INFORMATION,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            restored_acl,
+            original_dacl,
             std::ptr::null_mut(),
         )
     };
-    unsafe {
-        LocalFree(restored_acl.cast());
-        LocalFree(descriptor);
-    }
     if set_status != 0 {
         return Err(());
     }
@@ -358,32 +314,25 @@ fn restore_snapshot(snapshot: &AclSnapshot) -> Result<(), ()> {
             &mut actual_descriptor,
         )
     };
-    if status != 0 || actual_descriptor.is_null() {
+    if status != 0 || actual_descriptor.is_null() || actual_dacl.is_null() {
         if !actual_descriptor.is_null() {
             unsafe { LocalFree(actual_descriptor) };
         }
         return Err(());
     }
-    let mut present = 0;
-    let mut defaulted = 0;
-    let mut dacl = std::ptr::null_mut();
-    let ok = unsafe {
-        GetSecurityDescriptorDacl(actual_descriptor, &mut present, &mut dacl, &mut defaulted)
-    };
-    let equal = ok != 0 && (present != 0) == snapshot.original_present && !dacl.is_null() && {
-        let size = unsafe { (*dacl).AclSize as usize };
-        size == snapshot.original_acl_bytes
-            && unsafe {
-                std::slice::from_raw_parts(dacl.cast::<u8>(), size)
-                    == std::slice::from_raw_parts(
-                        snapshot.original_acl.as_ptr().cast::<u8>(),
-                        snapshot.original_acl_bytes,
-                    )
-            }
-    };
+    let size = unsafe { (*actual_dacl).AclSize as usize };
+    let equal = size == snapshot.original_acl_bytes
+        && unsafe {
+            std::slice::from_raw_parts(actual_dacl.cast::<u8>(), size)
+                == std::slice::from_raw_parts(
+                    snapshot.original_acl.as_ptr().cast::<u8>(),
+                    snapshot.original_acl_bytes,
+                )
+        };
     unsafe { LocalFree(actual_descriptor) };
     if equal { Ok(()) } else { Err(()) }
 }
+
 pub(super) fn probe_profile_creation() -> bool {
     let Ok(mut profile) = AppContainerProfile::create() else {
         return false;
@@ -414,4 +363,30 @@ pub(super) fn probe_directory_acl(path: &Path) -> bool {
     #[cfg(test)]
     eprintln!("M0.16.5 ACL probe: profile delete={deleted}");
     granted && deleted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_temporary_acl_grants_restore_exact_descriptors() {
+        let root = std::env::temp_dir().join(format!("maia-acl-restore-{}", unsafe {
+            GetCurrentProcessId()
+        }));
+        std::fs::create_dir_all(root.join("child")).unwrap();
+        std::fs::write(root.join("child/file.txt"), b"fixture").unwrap();
+        let mut profile = AppContainerProfile::create().unwrap();
+        let mut grants = TemporaryAclGrants::new();
+        grants.grant_read(&root, profile.sid()).unwrap();
+        grants
+            .grant_modify(&root.join("child"), profile.sid())
+            .unwrap();
+        grants
+            .grant_read_file(&root.join("child/file.txt"), profile.sid())
+            .unwrap();
+        grants.restore_all().expect("exact nested DACL restoration");
+        profile.delete().expect("profile removal");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
