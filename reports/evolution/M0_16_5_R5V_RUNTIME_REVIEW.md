@@ -150,3 +150,19 @@ A focused AppContainer helper probe showed that `CreatePipe` itself succeeds ins
 **Current verdict: OPEN / BLOCKED, not CLOSED_READY.** The concrete remaining blocker is the repeated Windows error 5 when Cargo/Clippy's child process is launched with captured stdout/stderr inside the AppContainer. It prevents Clippy, component check, and targeted tests from executing their rustc child, so the production Tier-1 verdict is rejection. E4 durable journal and adversarial isolation acceptance have not been established. M0.16.6 was not started.
 
 Disk measurement: C: had 3,195,781,120 bytes free at approximately 2026-10-01 18:53 UTC (20:53 Europe/Warsaw). Worktree: `C:\MAIA\public-export\.local\m0160-supervisor`; branch `codex/m0165-restricted-runtime`; starting HEAD `6caf8b55df5ed51c26287329b7971002e3b46211`.
+
+## Durable production-supervisor journal follow-up (2026-10-01)
+
+The ignored integration fixture originally failed before Tier-1 because it named its candidate root `candidates`, while the production host requires the exact `evolution-candidates` root name. This test-fixture-only mismatch was corrected in commit `0b0f4e4`; no acceptance check was relaxed. The test then ran from the clean committed checkout through the real `ProtectedRuntimeGate`, `GitWorkspaceHost`, `FixedCargoTier1Verifier`, restricted process runner, and `FileEvidenceJournal`.
+
+The production result was `Rejected / Tier1Failed`, as expected from the captured Clippy/component/test failures. Rustfmt passed; Clippy, component check, and targeted tests failed before rustc execution. The result included `CandidateIdentity=PASS`, `SyntaxStatic=PASS`, and `ProtectedSurfaceIntegrity=PASS`. The test's existing assertion expects all Tier-1 stages to pass and therefore the test process itself ended failed at that assertion; the failure is recorded honestly and is not an acceptance PASS.
+
+The durable journal was preserved at:
+
+`C:\Users\PS\AppData\Local\Temp\maia-m0165-production-4360-1790881223336353600\evidence\evolution.jsonl`
+
+It is 7,622 bytes, SHA-256 `E66AC37935CC0A81BC502C5796CD75DB44342F46A9BD335885B84372C789659D`. All 9 entries passed sequence, previous-hash, and entry-digest verification against the `FileEvidenceJournal` chain algorithm. The recorded decision is `TIER1FAILED` / `REJECTED`; checks are identity PASS, syntax PASS, formatting/lint FAIL, component build FAIL, targeted tests FAIL, protected-surface integrity PASS. The journal records `candidate_terminal=REJECTED`, `operation=discard_candidate`, followed by `state=CLOSED`. The candidate directory is absent after rejection. This verifies durable journaling and discard through the real supervisor failure path; it does not turn the Tier-1 result into PASS.
+
+The production-entry test does not run separate adversarial network or protected-path probes. Those E4 claims therefore remain limited to the earlier scratch launcher evidence. No production PASS or full E4 isolation acceptance is claimed.
+
+Final disk sample: C: had 3,191,877,632 bytes free at approximately 2026-10-01 19:21 UTC (21:21 Europe/Warsaw). Repository worktree was clean at HEAD `0b0f4e497f8c2d5b5f1115fd8ec5f652951b7e91` on `codex/m0165-restricted-runtime`.
