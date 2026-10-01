@@ -1168,7 +1168,7 @@ fn production_supervisor_tier1_runs_all_stages_in_appcontainer_and_journals_deci
         "maia-m0165-production-{}-{nonce}",
         std::process::id()
     ));
-    let candidate_root = base.join("candidates");
+    let candidate_root = base.join("evolution-candidates");
     fs::create_dir_all(&candidate_root).unwrap();
     let journal_path = base.join("evidence/evolution.jsonl");
     fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
