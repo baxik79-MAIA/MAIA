@@ -3019,6 +3019,10 @@ containment:
   breakaway: forbidden
   kill_on_owner_close: true
   network: appcontainer_without_network_capabilities_required; unavailable_fails_closed
+  resource_capabilities:
+    exact_allowlist: [maia.evolution.tier1.null.stdin]
+    scope: device_null_read_only
+    host_ace: exact_capability_sid_persistent; admin_prepared; rollback_available
   filesystem: appcontainer_acl_read_only_workspace_toolchain_and_writable_candidate_target_required; unavailable_fails_closed
   capability_levels: [same_user_process_tree_contained, restricted_identity_network_and_filesystem]
   minimum_tier1_level: restricted_identity_network_and_filesystem

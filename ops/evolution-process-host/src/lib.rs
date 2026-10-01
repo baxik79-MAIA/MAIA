@@ -943,26 +943,6 @@ mod windows_job {
                 }
             }
         }
-        if let Some(parent) = readonly_roots.iter().find_map(|root| {
-            root.ancestors()
-                .find(|part| {
-                    part.file_name().is_some_and(|name| {
-                        name.to_string_lossy()
-                            .eq_ignore_ascii_case("restricted-verifier-depot")
-                    })
-                })
-                .and_then(Path::parent)
-        }) {
-            if traversal_paths.insert(parent.to_owned())
-                && acl.grant_traverse(parent, profile.sid()).is_err()
-            {
-                eprintln!(
-                    "Tier-1 host ACL setup failed: depot-parent traverse-only grant on {}",
-                    parent.display()
-                );
-                return Err(ContainmentUnavailable);
-            }
-        }
         for path in executable_files {
             if acl.grant_read_file(&path, profile.sid()).is_err() {
                 eprintln!(
@@ -1523,6 +1503,10 @@ mod tests {
             pipe_diagnostic_child();
             return;
         }
+        if mode == "production-e4" {
+            production_e4_child();
+            return;
+        }
         if matches!(mode.as_str(), "spawn-and-sleep" | "spawn-and-exit") {
             let pid_file = std::env::var_os(HELPER_PID_FILE).expect("helper pid path");
             let child = Command::new(std::env::current_exe().expect("test executable"))
@@ -1709,6 +1693,166 @@ mod tests {
         }
 
         nt_child_pipe_stages();
+    }
+
+    fn production_e4_child() {
+        use std::net::{SocketAddr, TcpStream};
+
+        let path = |key: &str| PathBuf::from(std::env::var_os(key).expect("E4 path"));
+        let target = path("MAIA_E4_TARGET");
+        let workspace_file = path("MAIA_E4_WORKSPACE_FILE");
+        let protected_file = path("MAIA_E4_PROTECTED_FILE");
+        let canonical_file = path("MAIA_E4_CANONICAL_FILE");
+        let vendor_file = path("MAIA_E4_VENDOR_FILE");
+        let port: u16 = std::env::var("MAIA_E4_PORT").unwrap().parse().unwrap();
+        let target_write = fs::write(target.join("e4-target-write.txt"), b"synthetic").is_ok();
+        let workspace_write = fs::OpenOptions::new()
+            .write(true)
+            .open(workspace_file)
+            .is_ok();
+        let protected_read = fs::read(protected_file).is_ok();
+        let canonical_read = fs::read(canonical_file).is_ok();
+        let vendor_read = fs::read(&vendor_file).is_ok();
+        let vendor_write = fs::OpenOptions::new().write(true).open(vendor_file).is_ok();
+        let null_read = fs::File::open("NUL").is_ok();
+        let endpoint = SocketAddr::from(([127, 0, 0, 1], port));
+        let network_connected =
+            TcpStream::connect_timeout(&endpoint, Duration::from_secs(2)).is_ok();
+        let passed = target_write
+            && !workspace_write
+            && !protected_read
+            && !canonical_read
+            && vendor_read
+            && !vendor_write
+            && null_read
+            && !network_connected;
+        eprintln!(
+            "PRODUCTION_E4 target_write={target_write} workspace_write={workspace_write} protected_read={protected_read} canonical_read={canonical_read} vendor_read={vendor_read} vendor_write={vendor_write} null_read={null_read} network_connected={network_connected} passed={passed}"
+        );
+        assert!(passed, "production E4 AppContainer isolation");
+        fs::remove_file(target.join("e4-target-write.txt")).unwrap();
+    }
+
+    #[test]
+    #[ignore = "explicit M0.16.5 production AppContainer E4 isolation probe"]
+    fn production_appcontainer_e4_isolation() {
+        use std::net::TcpListener;
+
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!("maia-m0165-e4-{}", std::process::id()));
+        let target = root.join("target");
+        fs::create_dir_all(&target).unwrap();
+        let workspace_file = root.join("workspace-read-only.txt");
+        fs::write(&workspace_file, b"synthetic").unwrap();
+        let protected_file = root.with_extension("protected.txt");
+        fs::write(&protected_file, b"synthetic").unwrap();
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .to_path_buf();
+        let canonical_file = repo.join("Cargo.toml");
+        let vendor =
+            PathBuf::from(r"C:\MAIA\restricted-verifier-depot\vendor\m0165-r5v-generated-20260928");
+        let vendor_file = vendor.join("ab_glyph/Cargo.toml");
+        assert!(vendor_file.is_file(), "prepared production vendor");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let exe = std::env::current_exe().unwrap();
+        let system_root = std::env::var_os("SystemRoot")
+            .or_else(|| std::env::var_os("WINDIR"))
+            .expect("SystemRoot");
+        let system32 = PathBuf::from(&system_root).join("System32");
+        let mut environment = vec![
+            ("SYSTEMDRIVE".into(), "C:".into()),
+            ("COMSPEC".into(), system32.join("cmd.exe").into_os_string()),
+            ("PATH".into(), system32.into_os_string()),
+            ("SYSTEMROOT".into(), system_root.clone()),
+            ("WINDIR".into(), system_root),
+            ("TEMP".into(), target.as_os_str().to_owned()),
+            ("TMP".into(), target.as_os_str().to_owned()),
+            ("HOME".into(), target.as_os_str().to_owned()),
+            ("USERPROFILE".into(), target.as_os_str().to_owned()),
+            ("CARGO_HOME".into(), target.as_os_str().to_owned()),
+            ("CARGO_TARGET_DIR".into(), target.as_os_str().to_owned()),
+        ];
+        for key in [
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "OS",
+            "PROCESSOR_ARCHITECTURE",
+            "PROCESSOR_LEVEL",
+            "PROCESSOR_REVISION",
+            "PROCESSOR_IDENTIFIER",
+            "ALLUSERSPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "PUBLIC",
+            "PROGRAMDATA",
+            "PROGRAMFILES",
+            "PROGRAMFILES(X86)",
+            "PROGRAMW6432",
+            "COMMONPROGRAMFILES",
+            "COMMONPROGRAMFILES(X86)",
+            "COMMONPROGRAMW6432",
+            "COMPUTERNAME",
+            "USERNAME",
+            "SESSIONNAME",
+            "NUMBER_OF_PROCESSORS",
+            "PATHEXT",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                environment.push((key.into(), value));
+            }
+        }
+        for (key, value) in [
+            (HELPER_MODE, OsString::from("production-e4")),
+            ("MAIA_E4_TARGET", target.as_os_str().to_owned()),
+            (
+                "MAIA_E4_WORKSPACE_FILE",
+                workspace_file.as_os_str().to_owned(),
+            ),
+            (
+                "MAIA_E4_PROTECTED_FILE",
+                protected_file.as_os_str().to_owned(),
+            ),
+            (
+                "MAIA_E4_CANONICAL_FILE",
+                canonical_file.as_os_str().to_owned(),
+            ),
+            ("MAIA_E4_VENDOR_FILE", vendor_file.as_os_str().to_owned()),
+            ("MAIA_E4_PORT", OsString::from(port.to_string())),
+        ] {
+            environment.push((OsString::from(key), value));
+        }
+        let run = super::windows_job::run_restricted_process(
+            &exe,
+            &[
+                "--exact".into(),
+                "tests::contained_process_tree_helper".into(),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
+            &root,
+            &target,
+            &[exe.parent().unwrap().to_path_buf(), vendor],
+            &environment,
+            Duration::from_secs(30),
+            || false,
+        )
+        .expect("production containment");
+        eprintln!(
+            "PRODUCTION_E4_COMPLETION={:?} CLEANUP={} STDERR={} ",
+            run.completion,
+            run.cleanup_verified,
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(run.cleanup_verified);
+        assert_eq!(run.completion, Completion::Exited(0));
+        fs::remove_file(protected_file).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[repr(C)]
