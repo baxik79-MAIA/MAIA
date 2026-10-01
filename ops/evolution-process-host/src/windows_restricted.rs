@@ -2,22 +2,197 @@ use std::ffi::OsStr;
 use std::iter;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
+use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::Foundation::LocalFree;
 use windows_sys::Win32::Security::Authorization::{
-    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT,
-    SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, GetSecurityInfo, NO_MULTIPLE_TRUSTEE,
+    SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN,
+    TRUSTEE_W,
 };
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeleteAppContainerProfile,
 };
 use windows_sys::Win32::Security::{
-    ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl,
-    OBJECT_INHERIT_ACE,
+    ACCESS_ALLOWED_ACE, ACL, CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION,
+    DeriveCapabilitySidsFromName, EqualSid, GetAce, GetSecurityDescriptorDacl, OBJECT_INHERIT_ACE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_DELETE_CHILD, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
 };
+use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+
+pub(super) const NULL_STDIN_CAPABILITY_NAME: &str = "maia.evolution.tier1.null.stdin";
+
+pub(super) struct NullStdinCapability {
+    group_sids: *mut *mut core::ffi::c_void,
+    group_count: u32,
+    capability_sids: *mut *mut core::ffi::c_void,
+    capability_count: u32,
+}
+
+impl NullStdinCapability {
+    pub(super) fn derive() -> Result<Self, ()> {
+        let name = wide(OsStr::new(NULL_STDIN_CAPABILITY_NAME));
+        let mut group_sids = std::ptr::null_mut();
+        let mut group_count = 0;
+        let mut capability_sids = std::ptr::null_mut();
+        let mut capability_count = 0;
+        if unsafe {
+            DeriveCapabilitySidsFromName(
+                name.as_ptr(),
+                &mut group_sids,
+                &mut group_count,
+                &mut capability_sids,
+                &mut capability_count,
+            )
+        } == 0
+            || capability_sids.is_null()
+            || capability_count != 1
+        {
+            unsafe {
+                free_sid_array(group_sids, group_count);
+                free_sid_array(capability_sids, capability_count);
+            }
+            return Err(());
+        }
+        Ok(Self {
+            group_sids,
+            group_count,
+            capability_sids,
+            capability_count,
+        })
+    }
+
+    pub(super) fn sid(&self) -> *mut core::ffi::c_void {
+        unsafe { *self.capability_sids }
+    }
+}
+
+impl Drop for NullStdinCapability {
+    fn drop(&mut self) {
+        unsafe {
+            free_sid_array(self.group_sids, self.group_count);
+            free_sid_array(self.capability_sids, self.capability_count);
+        }
+    }
+}
+
+unsafe fn free_sid_array(sids: *mut *mut core::ffi::c_void, count: u32) {
+    if !sids.is_null() {
+        for index in 0..count {
+            let sid = unsafe { *sids.add(index as usize) };
+            if !sid.is_null() {
+                unsafe { LocalFree(sid) };
+            }
+        }
+        unsafe { LocalFree(sids.cast()) };
+    }
+}
+
+pub(super) fn null_stdin_capability_acl_available(capability_sid: *mut core::ffi::c_void) -> bool {
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *mut u16,
+    }
+    #[repr(C)]
+    struct ObjectAttributes {
+        length: u32,
+        root_directory: *mut core::ffi::c_void,
+        object_name: *mut UnicodeString,
+        attributes: u32,
+        security_descriptor: *mut core::ffi::c_void,
+        security_quality_of_service: *mut core::ffi::c_void,
+    }
+    #[repr(C)]
+    struct IoStatusBlock {
+        status: *mut core::ffi::c_void,
+        information: usize,
+    }
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtOpenFile(
+            file_handle: *mut *mut core::ffi::c_void,
+            desired_access: u32,
+            object_attributes: *mut ObjectAttributes,
+            io_status_block: *mut IoStatusBlock,
+            share_access: u32,
+            open_options: u32,
+        ) -> i32;
+    }
+
+    if capability_sid.is_null() {
+        return false;
+    }
+    let mut path = wide(OsStr::new(r"\Device\Null"));
+    let mut name = UnicodeString {
+        length: ((path.len() - 1) * 2) as u16,
+        maximum_length: (path.len() * 2) as u16,
+        buffer: path.as_mut_ptr(),
+    };
+    let mut attributes = ObjectAttributes {
+        length: std::mem::size_of::<ObjectAttributes>() as u32,
+        root_directory: std::ptr::null_mut(),
+        object_name: &mut name,
+        attributes: 0x40,
+        security_descriptor: std::ptr::null_mut(),
+        security_quality_of_service: std::ptr::null_mut(),
+    };
+    let mut io = IoStatusBlock {
+        status: std::ptr::null_mut(),
+        information: 0,
+    };
+    let mut handle = std::ptr::null_mut();
+    let opened = unsafe { NtOpenFile(&mut handle, 0x0002_0000, &mut attributes, &mut io, 3, 0) };
+    if opened < 0 || handle.is_null() {
+        return false;
+    }
+    let mut dacl = std::ptr::null_mut();
+    let mut descriptor = std::ptr::null_mut();
+    let status = unsafe {
+        GetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    let mut found = false;
+    if status == 0 && !descriptor.is_null() && !dacl.is_null() {
+        for index in 0..unsafe { (*dacl).AceCount } {
+            let mut ace = std::ptr::null_mut();
+            if unsafe { GetAce(dacl, index as u32, &mut ace) } == 0 || ace.is_null() {
+                continue;
+            }
+            let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
+            let sid = unsafe { std::ptr::addr_of!((*allowed).SidStart).cast_mut().cast() };
+            if u32::from(unsafe {
+                (*ace.cast::<windows_sys::Win32::Security::ACE_HEADER>()).AceType
+            }) == ACCESS_ALLOWED_ACE_TYPE
+                && unsafe { (*ace.cast::<windows_sys::Win32::Security::ACE_HEADER>()).AceFlags }
+                    == 0
+                && unsafe { (*allowed).Mask } == FILE_GENERIC_READ
+                && unsafe { EqualSid(sid, capability_sid) } != 0
+            {
+                found = true;
+                break;
+            }
+        }
+    }
+    unsafe {
+        if !descriptor.is_null() {
+            LocalFree(descriptor);
+        }
+        CloseHandle(handle);
+    }
+    found
+}
 
 pub(super) struct AppContainerProfile {
     name: Vec<u16>,
@@ -334,6 +509,12 @@ fn restore_snapshot(snapshot: &AclSnapshot) -> Result<(), ()> {
 }
 
 pub(super) fn probe_profile_creation() -> bool {
+    let Ok(capability) = NullStdinCapability::derive() else {
+        return false;
+    };
+    if !null_stdin_capability_acl_available(capability.sid()) {
+        return false;
+    }
     let Ok(mut profile) = AppContainerProfile::create() else {
         return false;
     };
@@ -368,6 +549,12 @@ pub(super) fn probe_directory_acl(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn null_stdin_resource_capability_derives_exactly_one_sid() {
+        let capability = NullStdinCapability::derive().expect("named resource capability");
+        assert!(!capability.sid().is_null());
+    }
 
     #[test]
     fn nested_temporary_acl_grants_restore_exact_descriptors() {

@@ -166,3 +166,50 @@ It is 7,622 bytes, SHA-256 `E66AC37935CC0A81BC502C5796CD75DB44342F46A9BD335885B8
 The production-entry test does not run separate adversarial network or protected-path probes. Those E4 claims therefore remain limited to the earlier scratch launcher evidence. No production PASS or full E4 isolation acceptance is claimed.
 
 Final disk sample: C: had 3,191,877,632 bytes free at approximately 2026-10-01 19:21 UTC (21:21 Europe/Warsaw). Repository worktree was clean at HEAD `0b0f4e497f8c2d5b5f1115fd8ec5f652951b7e91` on `codex/m0165-restricted-runtime`.
+
+## Exact AppContainer child-start diagnosis and null-stdin resource (2026-10-01)
+
+This supersedes the earlier hypothesis above that the access denied came from Rust's captured-pipe NT sequence. The source journal and four stage diagnostics from the latest production rejection were copied before cleanup to `reports/evolution/evidence/m0165-oserror5-20261001/`. The copied `evolution.jsonl` SHA-256 is `E66AC37935CC0A81BC502C5796CD75DB44342F46A9BD335885B84372C789659D`, equal to the source SHA. The four command stdout/stderr captures, metadata, and their hashes are retained in that same local evidence directory; the original Temp journal and diagnostics remain intact.
+
+### Probe result
+
+Added ignored Windows test `tests::production_appcontainer_child_pipe_stage_diagnostic` in `maia-evolution-process-host`. It calls the production `run_restricted_process` path with the same unique AppContainer creation, explicit standard handles, suspended process start, Job assignment before resume, host-side output capture, and filesystem ACL/profile cleanup. Its first attempt failed before process start with Win32 203 because the test fixture omitted environment variables required by Windows `CreateProcessW`. That was a probe fixture error; I added the full fixed Tier-1 Windows environment and reran the same short test. The corrected run exited 0 in about 0.22 seconds, verified Job drain, exact ACL restore, and profile deletion.
+
+The exact observed comparisons were:
+
+- Direct child with inherited standard streams: success, exit 0.
+- Win32 `CreatePipe`: success.
+- Rust `Command::spawn` with inherited stdio: success, exit 0.
+- Rust `Command::spawn` with stdout/stderr piped and stdin inherited: success, exit 0.
+- Rust `Command::spawn` with stdin `Stdio::null()` and inherited outputs: `PermissionDenied`, raw OS error 5.
+- Rust `Command::spawn` with stdin `Stdio::null()` and stdout/stderr piped: `PermissionDenied`, raw OS error 5.
+- Rust `Command::output()`: `PermissionDenied`, raw OS error 5.
+- Win32 `CreateFileW("NUL", GENERIC_READ)`: failed immediately with Win32 5.
+- Pinned Rust 1.98.1 NT calls: `NtOpenFile("\\Device\\NamedPipe\\")` returned NTSTATUS 0 / DOS 0; `NtCreateNamedPipeFile` returned 0 / 0; `NtOpenFile` on the anonymous peer returned 0 / 0.
+
+Therefore the exact denial is opening the `NUL` device for Rust `Stdio::Null`, which `Command::output()` selects as default stdin. It precedes the captured child-pipe calls. A toolchain rebuild or NamedPipe namespace ACL change is unsupported by this evidence. The component check, Clippy, targeted tests, and E4 were not rerun because the required host resource has not yet been prepared.
+
+### Corrective design and contract delta
+
+`spec/evolution_protected_runtime.yaml` now permits exactly one non-network resource capability, `maia.evolution.tier1.null.stdin`, with `FILE_GENERIC_READ` on `\\Device\Null`. `tools/evolution_protected_runtime_contract.py` checks the exact allowlist and scope. ADR-0048 records the boundary and test requirements. This is a deliberate change from the previous implementation's empty capability list: the canonical contract requires absence of network capabilities, not an empty list of every resource capability. No network capability is added. A per-run random AppContainer package SID remains in place for unique temporary filesystem ACLs; the capability SID is not added to any filesystem, registry, pipe, or other host ACL. No NamedPipe namespace ACL is changed.
+
+The production adapter now derives that SID, checks that the host DACL contains one exact, non-inheritable read ACE before touching run ACLs, passes exactly that one `SID_AND_ATTRIBUTES`, and verifies the launched token's complete capability list equals that SID. The host readiness probe performs the same exact DACL check. Missing/mismatched preparation fails closed.
+
+`ops/evolution-workspace-host/tools/m0165-r5v/Prepare-M0165NullStdinCapability.ps1` plus its C# helper provide an idempotent elevated install and rollback. `-ValidateOnly` is read-only and non-elevated. The currently observed DACL is `D:(A;;0x1201bf;;;WD)(A;;FA;;;SY)(A;;FA;;;BA)(A;;0x1200a9;;;RC)`. The derived capability SID is `S-1-15-3-1024-1988635889-3063999656-362765618-2578588777-2081098023-3982749461-1818700090-2051019908`; `ace_count_for_sid=0`. Running `-ValidateOnly` returned the DACL and exit 1 as expected because the required ACE is absent. No system DACL was changed. The active shell is medium integrity; its Administrators SID is deny-only and it has no `SeSecurityPrivilege`, so I have not attempted to write the SYSTEM-owned device DACL from this token.
+
+### Verification and current status
+
+- `cargo test -p maia-evolution-process-host --lib --locked --offline` with the existing generated vendor: 12 passed, 0 failed, 1 ignored; includes the new capability SID derivation check, existing output-capture and timeout/descendant tests, exact ACL restoration, and job containment tests. The positive AppContainer pipe diagnostic remains ignored until host preparation is installed.
+- `tools/validate_spec.py`: passed, 40 YAML files parsed and all contract checks passed.
+- C# preparation helper compiled through PowerShell `Add-Type`; read-only host validation successfully derived the capability SID and inspected the NUL DACL.
+- No production E1-E4 stage ran after this code change. In particular, no restricted component check, Clippy, targeted tests, E4 network/protected-surface probes, or new production decision/journal run is claimed.
+- Per-run temporary filesystem ACLs and profile deletion were verified in the corrected diagnostic run. The proposed NUL ACE is a persistent, administrator-installed host resource with an explicit remove command; installation/rollback have not been executed. There is no pending temporary system change from this session.
+- Disk cleanup removed only an obsolete build target in a separate old worktree, current `target/debug/incremental`, current generated PDB symbols, and current reproducible `target/debug/build` outputs. It retained the active `target/debug/deps`, Rust/Cargo registry cache, generated vendor depot, and pinned toolchain.
+
+**Current verdict: OPEN / BLOCKED, not CLOSED_READY.** The exact denial is resolved diagnostically and the resource-level fix is implemented in code, but production cannot start until the one-time elevated NUL capability ACE is prepared. After that resource exists, run the ignored AppContainer reproducer first; only on its pass run component `cargo check`, then Clippy and targeted tests, then production E4 and journal verification. Earlier scratch evidence remains in its own scope. M0.16.6 was not started.
+
+### Checkpoint verification addendum (2026-10-01)
+
+- `cargo test -p maia-evolution-workspace-host --lib --locked --offline`: 7 passed, 0 failed, 1 ignored in 355.86 s. The ignored case requires the prepared host resource. This is host-side workspace verification, not a production restricted Tier-1 pass.
+- Final `git diff --check`: passed. `python tools/validate_spec.py`: passed; 40 YAML files parsed, all contract checks passed.
+- Positive post-fix AppContainer reproducer, restricted component check, Clippy, targeted tests, E4 adversarial probes, and production journal decision remain pending the administrator-prepared exact device-null ACE. No system DACL change was made in this checkpoint.

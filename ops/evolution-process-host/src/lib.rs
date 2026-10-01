@@ -384,6 +384,7 @@ mod windows_job {
         process: *mut core::ffi::c_void,
         job: *mut core::ffi::c_void,
         expected_sid: *mut core::ffi::c_void,
+        expected_capability_sid: *mut core::ffi::c_void,
     ) -> bool {
         let mut in_job = 0;
         if unsafe { IsProcessInJob(process, job, &mut in_job) } == 0 || in_job == 0 {
@@ -465,11 +466,36 @@ mod windows_job {
             )
         } == 0
             || returned < std::mem::size_of::<u32>() as u32
-            || unsafe { *(capabilities.as_ptr().cast::<u32>()) } != 0
         {
             eprintln!(
                 "Tier-1 child has unexpected or unreadable capabilities: Win32 {}",
                 unsafe { GetLastError() }
+            );
+            return false;
+        }
+        let capability_count = unsafe { *(capabilities.as_ptr().cast::<u32>()) };
+        let capability_offset =
+            std::mem::size_of::<u32>().div_ceil(std::mem::align_of::<
+                windows_sys::Win32::Security::SID_AND_ATTRIBUTES,
+            >()) * std::mem::align_of::<windows_sys::Win32::Security::SID_AND_ATTRIBUTES>();
+        let capability = unsafe {
+            capabilities
+                .as_ptr()
+                .cast::<u8>()
+                .add(capability_offset)
+                .cast::<windows_sys::Win32::Security::SID_AND_ATTRIBUTES>()
+        };
+        if capability_count != 1
+            || expected_capability_sid.is_null()
+            || unsafe {
+                (*capability).Sid.is_null()
+                    || EqualSid((*capability).Sid, expected_capability_sid) == 0
+                    || (*capability).Attributes & 0x0000_0004 == 0
+            }
+        {
+            eprintln!(
+                "Tier-1 child capability allowlist mismatch: count={capability_count}; expected={}",
+                super::windows_restricted::NULL_STDIN_CAPABILITY_NAME
             );
             return false;
         }
@@ -809,7 +835,7 @@ mod windows_job {
         }
     }
 
-    fn run_restricted_process(
+    pub(super) fn run_restricted_process(
         program: &Path,
         arguments: &[String],
         working_directory: &Path,
@@ -824,6 +850,19 @@ mod windows_job {
             .get_or_init(|| Mutex::new(()))
             .try_lock()
             .map_err(|_| ContainmentUnavailable)?;
+        let resource_capability = super::windows_restricted::NullStdinCapability::derive()
+            .map_err(|_| {
+                eprintln!("Tier-1 null-stdin capability derivation failed");
+                ContainmentUnavailable
+            })?;
+        if !super::windows_restricted::null_stdin_capability_acl_available(
+            resource_capability.sid(),
+        ) {
+            eprintln!(
+                "Tier-1 null-stdin capability host ACL is absent or mismatched; run the elevated host preparation"
+            );
+            return Err(ContainmentUnavailable);
+        }
         let mut profile = super::windows_restricted::AppContainerProfile::create()
             .map_err(|_| ContainmentUnavailable)?;
         let mut acl = super::windows_restricted::TemporaryAclGrants::new();
@@ -933,10 +972,14 @@ mod windows_job {
                 return Err(ContainmentUnavailable);
             }
         }
+        let mut capability = windows_sys::Win32::Security::SID_AND_ATTRIBUTES {
+            Sid: resource_capability.sid(),
+            Attributes: 0x0000_0004 | 0x0000_0002,
+        };
         let security = windows_sys::Win32::Security::SECURITY_CAPABILITIES {
             AppContainerSid: profile.sid(),
-            Capabilities: std::ptr::null_mut::<windows_sys::Win32::Security::SID_AND_ATTRIBUTES>(),
-            CapabilityCount: 0,
+            Capabilities: &mut capability,
+            CapabilityCount: 1,
             Reserved: 0,
         };
         let run_result = run_process_with_security(
@@ -948,7 +991,17 @@ mod windows_job {
             cancelled,
             Some(&security),
         );
-        eprintln!("Tier-1 restricted child completion={run_result:?}");
+        match &run_result {
+            Ok(captured) => eprintln!(
+                "Tier-1 restricted child completion={:?}; stdout_bytes={}; stdout_truncated={}; stderr_bytes={}; stderr_truncated={}",
+                captured.completion,
+                captured.stdout.len(),
+                captured.stdout_truncated,
+                captured.stderr.len(),
+                captured.stderr_truncated
+            ),
+            Err(_) => eprintln!("Tier-1 restricted child completion=containment-unavailable"),
+        }
         let acl_result = acl.restore_all();
         eprintln!(
             "Tier-1 temporary ACL restoration: {}",
@@ -1326,7 +1379,16 @@ mod windows_job {
             return Err(ContainmentUnavailable);
         }
         if let Some(security) = security {
-            if !verify_restricted_child(process.hProcess, job, security.AppContainerSid) {
+            if !verify_restricted_child(
+                process.hProcess,
+                job,
+                security.AppContainerSid,
+                if security.Capabilities.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    unsafe { (*security.Capabilities).Sid }
+                },
+            ) {
                 let _ = terminate_job_and_wait(job, 1);
                 return Err(ContainmentUnavailable);
             }
@@ -1457,6 +1519,10 @@ mod tests {
             std::io::stderr().write_all(b"\nstderr-end\n").unwrap();
             return;
         }
+        if mode == "pipe-diagnostic" {
+            pipe_diagnostic_child();
+            return;
+        }
         if matches!(mode.as_str(), "spawn-and-sleep" | "spawn-and-exit") {
             let pid_file = std::env::var_os(HELPER_PID_FILE).expect("helper pid path");
             let child = Command::new(std::env::current_exe().expect("test executable"))
@@ -1480,6 +1546,442 @@ mod tests {
             }
         }
         panic!("unknown containment helper mode: {mode}");
+    }
+
+    fn pipe_diagnostic_child() {
+        use windows_sys::Win32::Foundation::GENERIC_READ;
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+        use windows_sys::Win32::System::Pipes::CreatePipe;
+
+        let self_exe = std::env::current_exe().expect("current test executable");
+        let child_args = [
+            "--exact",
+            "tests::contained_process_tree_helper",
+            "--nocapture",
+            "--test-threads=1",
+        ];
+        let mut inherited = Command::new(&self_exe);
+        inherited.args(child_args).env(HELPER_MODE, "exit");
+        match inherited.status() {
+            Ok(status) => eprintln!("PROBE inherited-child: status={status}"),
+            Err(error) => eprintln!(
+                "PROBE inherited-child: spawn-error kind={:?} raw={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        }
+
+        let mut read = std::ptr::null_mut();
+        let mut write = std::ptr::null_mut();
+        let mut security = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: 1,
+        };
+        let created = unsafe { CreatePipe(&mut read, &mut write, &mut security, 0) };
+        if created == 0 {
+            let error = unsafe { GetLastError() };
+            eprintln!("PROBE Win32 CreatePipe: failed immediately win32={error}");
+        } else {
+            eprintln!("PROBE Win32 CreatePipe: success read={read:p} write={write:p}");
+            unsafe {
+                CloseHandle(read);
+                CloseHandle(write);
+            }
+        }
+
+        let nul_name: Vec<u16> = "NUL".encode_utf16().chain(std::iter::once(0)).collect();
+        let nul = unsafe {
+            CreateFileW(
+                nul_name.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if nul == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            let error = unsafe { GetLastError() };
+            eprintln!(
+                "PROBE Win32 CreateFileW(NUL, GENERIC_READ): failed immediately win32={error}"
+            );
+        } else {
+            eprintln!("PROBE Win32 CreateFileW(NUL, GENERIC_READ): success handle={nul:p}");
+            unsafe { CloseHandle(nul) };
+        }
+
+        let mut spawned = Command::new(&self_exe);
+        spawned.args(child_args).env(HELPER_MODE, "exit");
+        match spawned.spawn() {
+            Ok(mut child) => match child.wait() {
+                Ok(status) => eprintln!("PROBE Rust Command::spawn inherited: status={status}"),
+                Err(error) => eprintln!("PROBE Rust Command::spawn inherited: wait-error={error}"),
+            },
+            Err(error) => eprintln!(
+                "PROBE Rust Command::spawn inherited: spawn-error kind={:?} raw={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        }
+
+        let mut null_stdin = Command::new(&self_exe);
+        null_stdin
+            .args(child_args)
+            .env(HELPER_MODE, "exit")
+            .stdin(std::process::Stdio::null());
+        match null_stdin.status() {
+            Ok(status) => {
+                eprintln!("PROBE Rust Command::spawn stdin=null inherited outputs: status={status}")
+            }
+            Err(error) => eprintln!(
+                "PROBE Rust Command::spawn stdin=null inherited outputs: spawn-error kind={:?} raw={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        }
+
+        let mut null_stdin_piped_outputs = Command::new(&self_exe);
+        null_stdin_piped_outputs
+            .args(child_args)
+            .env(HELPER_MODE, "exit")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        match null_stdin_piped_outputs.spawn() {
+            Ok(child) => match child.wait_with_output() {
+                Ok(output) => eprintln!(
+                    "PROBE Rust Command::spawn stdin=null stdout/stderr piped: status={} stdout={} stderr={}",
+                    output.status,
+                    output.stdout.len(),
+                    output.stderr.len()
+                ),
+                Err(error) => eprintln!(
+                    "PROBE Rust Command::spawn stdin=null wait_with_output: error={error}"
+                ),
+            },
+            Err(error) => eprintln!(
+                "PROBE Rust Command::spawn stdin=null stdout/stderr piped: spawn-error kind={:?} raw={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        }
+
+        let mut piped = Command::new(&self_exe);
+        piped.args(child_args).env(HELPER_MODE, "exit");
+        match piped.spawn() {
+            Ok(child) => match child.wait_with_output() {
+                Ok(output) => eprintln!(
+                    "PROBE Rust Command::spawn stdout/stderr piped: status={} stdout={} stderr={}",
+                    output.status,
+                    output.stdout.len(),
+                    output.stderr.len()
+                ),
+                Err(error) => {
+                    eprintln!("PROBE Rust Command::spawn wait_with_output: error={error}")
+                }
+            },
+            Err(error) => eprintln!(
+                "PROBE Rust Command::spawn stdout/stderr piped: spawn-error kind={:?} raw={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        }
+
+        let mut output = Command::new(&self_exe);
+        output.args(child_args).env(HELPER_MODE, "exit");
+        match output.output() {
+            Ok(output) => eprintln!(
+                "PROBE Rust Command::output: status={} stdout={} stderr={}",
+                output.status,
+                output.stdout.len(),
+                output.stderr.len()
+            ),
+            Err(error) => eprintln!(
+                "PROBE Rust Command::output: spawn-error kind={:?} raw={:?} error={error}",
+                error.kind(),
+                error.raw_os_error()
+            ),
+        }
+
+        nt_child_pipe_stages();
+    }
+
+    #[repr(C)]
+    struct NtUnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *mut u16,
+    }
+    #[repr(C)]
+    struct NtObjectAttributes {
+        length: u32,
+        root_directory: *mut core::ffi::c_void,
+        object_name: *mut NtUnicodeString,
+        attributes: u32,
+        security_descriptor: *mut core::ffi::c_void,
+        security_quality_of_service: *mut core::ffi::c_void,
+    }
+    #[repr(C)]
+    struct NtIoStatusBlock {
+        status: *mut core::ffi::c_void,
+        information: usize,
+    }
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtOpenFile(
+            file_handle: *mut *mut core::ffi::c_void,
+            desired_access: u32,
+            object_attributes: *mut NtObjectAttributes,
+            io_status_block: *mut NtIoStatusBlock,
+            share_access: u32,
+            open_options: u32,
+        ) -> i32;
+        fn NtCreateNamedPipeFile(
+            file_handle: *mut *mut core::ffi::c_void,
+            desired_access: u32,
+            object_attributes: *mut NtObjectAttributes,
+            io_status_block: *mut NtIoStatusBlock,
+            share_access: u32,
+            create_disposition: u32,
+            create_options: u32,
+            named_pipe_type: u32,
+            read_mode: u32,
+            completion_mode: u32,
+            maximum_instances: u32,
+            inbound_quota: u32,
+            outbound_quota: u32,
+            default_timeout: *const i64,
+        ) -> i32;
+        fn RtlNtStatusToDosError(status: i32) -> u32;
+    }
+
+    fn nt_child_pipe_stages() {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
+        let mut io = NtIoStatusBlock {
+            status: std::ptr::null_mut(),
+            information: 0,
+        };
+        let mut path: Vec<u16> = "\\Device\\NamedPipe\\".encode_utf16().collect();
+        let mut name = NtUnicodeString {
+            length: (path.len() * 2) as u16,
+            maximum_length: (path.len() * 2) as u16,
+            buffer: path.as_mut_ptr(),
+        };
+        let mut attributes = NtObjectAttributes {
+            length: std::mem::size_of::<NtObjectAttributes>() as u32,
+            root_directory: std::ptr::null_mut(),
+            object_name: &mut name,
+            attributes: 0x40,
+            security_descriptor: std::ptr::null_mut(),
+            security_quality_of_service: std::ptr::null_mut(),
+        };
+        let mut pipe_fs = std::ptr::null_mut();
+        let status = unsafe {
+            NtOpenFile(
+                &mut pipe_fs,
+                0x0010_0000 | 0x8000_0000,
+                &mut attributes,
+                &mut io,
+                3,
+                0x20,
+            )
+        };
+        let dos = unsafe { RtlNtStatusToDosError(status) };
+        eprintln!(
+            "PROBE NT NtOpenFile(\\Device\\NamedPipe\\): status=0x{:08X} dos={dos}",
+            status as u32
+        );
+        if status < 0 {
+            return;
+        }
+
+        let empty = NtUnicodeString {
+            length: 0,
+            maximum_length: 0,
+            buffer: std::ptr::null_mut(),
+        };
+        attributes.object_name = (&empty as *const NtUnicodeString).cast_mut();
+        attributes.root_directory = pipe_fs;
+        attributes.attributes = 0;
+        let mut pipe = std::ptr::null_mut();
+        let timeout = -500_000i64;
+        let status = unsafe {
+            NtCreateNamedPipeFile(
+                &mut pipe,
+                0x0010_0000 | 0x8000_0000,
+                &mut attributes,
+                &mut io,
+                2,
+                2,
+                0,
+                0,
+                0,
+                0,
+                1,
+                64 * 1024,
+                64 * 1024,
+                &timeout,
+            )
+        };
+        let dos = unsafe { RtlNtStatusToDosError(status) };
+        eprintln!(
+            "PROBE NT NtCreateNamedPipeFile: status=0x{:08X} dos={dos}",
+            status as u32
+        );
+        if status < 0 {
+            unsafe { CloseHandle(pipe_fs) };
+            return;
+        }
+
+        attributes.root_directory = pipe;
+        attributes.attributes = 2;
+        let mut peer = std::ptr::null_mut();
+        let status = unsafe {
+            NtOpenFile(
+                &mut peer,
+                0x0010_0000 | 0x4000_0000 | 0x80,
+                &mut attributes,
+                &mut io,
+                0,
+                0x40 | 0x20,
+            )
+        };
+        let dos = unsafe { RtlNtStatusToDosError(status) };
+        eprintln!(
+            "PROBE NT NtOpenFile(anonymous peer): status=0x{:08X} dos={dos}",
+            status as u32
+        );
+        if status >= 0 {
+            unsafe { CloseHandle(peer) };
+        }
+        unsafe {
+            CloseHandle(pipe);
+            CloseHandle(pipe_fs);
+        }
+    }
+
+    #[test]
+    #[ignore = "explicit M0.16.5 AppContainer pipe diagnosis"]
+    fn production_appcontainer_child_pipe_stage_diagnostic() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root =
+            std::env::temp_dir().join(format!("maia-m0165-pipe-probe-{}", std::process::id()));
+        let target = root.join("target");
+        let temp = target.join("tmp");
+        let home = target.join("home");
+        let cargo_home = target.join("cargo-home");
+        for directory in [&target, &temp, &home, &cargo_home] {
+            fs::create_dir_all(directory).expect("probe root");
+        }
+        let exe = std::env::current_exe().expect("test executable");
+        let system_root = std::env::var_os("SystemRoot")
+            .or_else(|| std::env::var_os("WINDIR"))
+            .expect("SystemRoot");
+        let system32 = PathBuf::from(&system_root).join("System32");
+        let mut environment = vec![
+            ("SYSTEMDRIVE".into(), "C:".into()),
+            ("COMSPEC".into(), system32.join("cmd.exe").into_os_string()),
+            ("PATH".into(), system32.into_os_string()),
+            ("SYSTEMROOT".into(), system_root.clone()),
+            ("WINDIR".into(), system_root),
+            ("TEMP".into(), temp.clone().into_os_string()),
+            ("TMP".into(), temp.into_os_string()),
+            ("HOME".into(), home.clone().into_os_string()),
+            ("USERPROFILE".into(), home.into_os_string()),
+            ("CARGO_HOME".into(), cargo_home.into_os_string()),
+            ("CARGO_TARGET_DIR".into(), target.as_os_str().to_owned()),
+        ];
+        for key in [
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "OS",
+            "PROCESSOR_ARCHITECTURE",
+            "PROCESSOR_LEVEL",
+            "PROCESSOR_REVISION",
+            "PROCESSOR_IDENTIFIER",
+            "ALLUSERSPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "PUBLIC",
+            "PROGRAMDATA",
+            "PROGRAMFILES",
+            "PROGRAMFILES(X86)",
+            "PROGRAMW6432",
+            "COMMONPROGRAMFILES",
+            "COMMONPROGRAMFILES(X86)",
+            "COMMONPROGRAMW6432",
+            "COMPUTERNAME",
+            "USERNAME",
+            "SESSIONNAME",
+            "NUMBER_OF_PROCESSORS",
+            "PATHEXT",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                environment.push((key.into(), value));
+            }
+        }
+        environment.push((
+            OsString::from(HELPER_MODE),
+            OsString::from("pipe-diagnostic"),
+        ));
+        let run = super::windows_job::run_restricted_process(
+            &exe,
+            &[
+                "--exact".into(),
+                "tests::contained_process_tree_helper".into(),
+                "--nocapture".into(),
+                "--test-threads=1".into(),
+            ],
+            &root,
+            &target,
+            &[exe.parent().expect("exe parent").to_owned()],
+            &environment,
+            Duration::from_secs(20),
+            || false,
+        )
+        .expect("production AppContainer runner");
+        fs::remove_dir_all(&root).expect("probe fixture cleanup");
+        eprintln!("PIPE_DIAGNOSTIC_COMPLETION={:?}", run.completion);
+        eprintln!(
+            "PIPE_DIAGNOSTIC_STDOUT_BEGIN\n{}\nPIPE_DIAGNOSTIC_STDOUT_END",
+            String::from_utf8_lossy(&run.stdout)
+        );
+        eprintln!(
+            "PIPE_DIAGNOSTIC_STDERR_BEGIN\n{}\nPIPE_DIAGNOSTIC_STDERR_END",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            run.cleanup_verified,
+            "AppContainer and temporary ACL cleanup"
+        );
+        assert_eq!(run.completion, Completion::Exited(0));
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        for evidence in [
+            "PROBE inherited-child: status=exit code: 0",
+            "PROBE Win32 CreatePipe: success",
+            "PROBE Win32 CreateFileW(NUL, GENERIC_READ): success",
+            "PROBE Rust Command::spawn inherited: status=exit code: 0",
+            "PROBE Rust Command::spawn stdin=null inherited outputs: status=exit code: 0",
+            "PROBE Rust Command::spawn stdout/stderr piped: status=exit code: 0",
+            "PROBE Rust Command::spawn stdin=null stdout/stderr piped: status=exit code: 0",
+            "PROBE Rust Command::output: status=exit code: 0",
+            "PROBE NT NtOpenFile(\\Device\\NamedPipe\\): status=0x00000000 dos=0",
+            "PROBE NT NtCreateNamedPipeFile: status=0x00000000 dos=0",
+            "PROBE NT NtOpenFile(anonymous peer): status=0x00000000 dos=0",
+        ] {
+            assert!(
+                stderr.contains(evidence),
+                "missing probe evidence: {evidence}\n{stderr}"
+            );
+        }
     }
 
     fn run_helper(
