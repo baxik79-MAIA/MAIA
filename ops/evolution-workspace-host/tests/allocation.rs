@@ -1266,6 +1266,27 @@ fn production_supervisor_tier1_runs_all_stages_in_appcontainer_and_journals_deci
     drop(candidate);
     drop(host);
 
+    let evidence_dir = PathBuf::from(
+        std::env::var_os("MAIA_M0165_EVIDENCE_DIR")
+            .expect("explicit external evidence directory for production Tier-1 test"),
+    );
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let preserved_journal = evidence_dir.join(format!("production-supervisor-{nonce}.jsonl"));
+    fs::copy(&journal_path, &preserved_journal).unwrap();
+    let original_hash = format!(
+        "{:x}",
+        sha2::Sha256::digest(fs::read(&journal_path).unwrap())
+    );
+    let preserved_hash = format!(
+        "{:x}",
+        sha2::Sha256::digest(fs::read(&preserved_journal).unwrap())
+    );
+    assert_eq!(original_hash, preserved_hash, "preserved journal identity");
+    eprintln!(
+        "PRESERVED_PRODUCTION_JOURNAL={} SHA256={preserved_hash}",
+        preserved_journal.display()
+    );
+
     let events = FileEvidenceJournal::read_events(&journal_path).unwrap();
     assert!(events.iter().any(|event| {
         event["kind"] == "mutation_attempt"
