@@ -1516,6 +1516,10 @@ mod tests {
             production_e4_child();
             return;
         }
+        if mode == "reparse-create" || mode == "reparse-write" {
+            production_reparse_child(mode == "reparse-write");
+            return;
+        }
         if matches!(mode.as_str(), "spawn-and-sleep" | "spawn-and-exit") {
             let pid_file = std::env::var_os(HELPER_PID_FILE).expect("helper pid path");
             let child = Command::new(std::env::current_exe().expect("test executable"))
@@ -2098,6 +2102,242 @@ mod tests {
             );
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Runs inside the AppContainer: tries every unprivileged way to make a
+    /// path under the writable target alias a host path outside it.
+    fn production_reparse_child(write_through: bool) {
+        let path = |key: &str| PathBuf::from(std::env::var_os(key).expect("reparse path"));
+        let target = path("MAIA_E4_TARGET");
+        let outside_dir = path("MAIA_E4_OUTSIDE_DIR");
+        let outside_file = path("MAIA_E4_OUTSIDE_FILE");
+        let comspec = std::env::var_os("COMSPEC").expect("COMSPEC");
+        if write_through {
+            let mut wrote = Vec::new();
+            for (name, relative) in [
+                ("junction", "junction/escape.txt"),
+                ("dir_symlink", "dir-symlink/escape.txt"),
+                ("file_symlink", "file-symlink"),
+                ("hardlink", "hardlink"),
+            ] {
+                let link = target.join(relative.split('/').next().unwrap());
+                let outcome = if fs::symlink_metadata(&link).is_err() {
+                    "absent".to_owned()
+                } else {
+                    // Only write through a link left by the earlier stage.
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create(relative.contains('/'))
+                        .truncate(false)
+                        .open(target.join(relative))
+                        .and_then(|mut file| std::io::Write::write_all(&mut file, b"escape"))
+                        .map_or_else(
+                            |error| format!("denied:{:?}", error.raw_os_error()),
+                            |()| "written".to_owned(),
+                        )
+                };
+                wrote.push(format!("{name}={outcome}"));
+            }
+            eprintln!("PRODUCTION_E4_REPARSE_WRITE {}", wrote.join(" "));
+            return;
+        }
+        let outcome = |result: std::io::Result<()>| match result {
+            Ok(()) => "created".to_owned(),
+            Err(error) => format!("denied:{:?}", error.raw_os_error()),
+        };
+        let junction = outcome(create_mount_point(&target.join("junction"), &outside_dir));
+        // Positive control: the same call may point at a directory the
+        // container can write, so a denial above is the outside-target check.
+        fs::create_dir_all(target.join("inner")).unwrap();
+        let inner_junction = outcome(create_mount_point(
+            &target.join("inner-junction"),
+            &target.join("inner"),
+        ));
+        let cmd_junction = std::process::Command::new(&comspec)
+            .args(["/c", "mklink", "/J"])
+            .arg(target.join("cmd-junction"))
+            .arg(&outside_dir)
+            .status()
+            .map(|status| format!("exit:{:?}", status.code()))
+            .unwrap_or_else(|error| format!("spawn:{:?}", error.raw_os_error()));
+        let dir_symlink = outcome(std::os::windows::fs::symlink_dir(
+            &outside_dir,
+            target.join("dir-symlink"),
+        ));
+        let file_symlink = outcome(std::os::windows::fs::symlink_file(
+            &outside_file,
+            target.join("file-symlink"),
+        ));
+        let hardlink = outcome(fs::hard_link(&outside_file, target.join("hardlink")));
+        eprintln!(
+            "PRODUCTION_E4_REPARSE_CREATE junction={junction} inner_junction={inner_junction} cmd_junction={cmd_junction} dir_symlink={dir_symlink} file_symlink={file_symlink} hardlink={hardlink}"
+        );
+    }
+
+    /// Unprivileged NTFS mount point (junction) creation, as candidate code
+    /// could perform it: an empty directory plus FSCTL_SET_REPARSE_POINT.
+    fn create_mount_point(link: &Path, destination: &Path) -> std::io::Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+
+        fs::create_dir(link)?;
+        let directory = fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(0x0200_0000 | 0x0020_0000)
+            .open(link)?;
+        let plain = destination.to_string_lossy();
+        let plain = plain.strip_prefix(r"\\?\").unwrap_or(&plain).to_owned();
+        let substitute = format!(r"\??\{plain}").encode_utf16().collect::<Vec<_>>();
+        let print = std::ffi::OsStr::new(&plain)
+            .encode_wide()
+            .collect::<Vec<_>>();
+        let mut path_buffer = substitute.clone();
+        path_buffer.push(0);
+        path_buffer.extend_from_slice(&print);
+        path_buffer.push(0);
+        let mut buffer = Vec::<u8>::new();
+        buffer.extend_from_slice(&0xA000_0003u32.to_le_bytes());
+        buffer.extend_from_slice(&((8 + path_buffer.len() * 2) as u16).to_le_bytes());
+        buffer.extend_from_slice(&0u16.to_le_bytes());
+        for value in [
+            0u16,
+            (substitute.len() * 2) as u16,
+            ((substitute.len() + 1) * 2) as u16,
+            (print.len() * 2) as u16,
+        ] {
+            buffer.extend_from_slice(&value.to_le_bytes());
+        }
+        for unit in path_buffer {
+            buffer.extend_from_slice(&unit.to_le_bytes());
+        }
+        let mut returned = 0u32;
+        let ok = unsafe {
+            windows_sys::Win32::System::IO::DeviceIoControl(
+                directory.as_raw_handle(),
+                0x0009_00A4,
+                buffer.as_ptr().cast(),
+                buffer.len() as u32,
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            let error = std::io::Error::last_os_error();
+            drop(directory);
+            let _ = fs::remove_dir(link);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Production-runtime E4 reparse containment: a candidate stage must not be
+    /// able to leave a junction, symlink or hardlink in its writable target that
+    /// a later stage (with a fresh per-run SID and a fresh inheritable target
+    /// grant) or the host can use to reach a path outside the target.
+    #[test]
+    #[ignore = "explicit M0.16.5 production AppContainer E4 reparse probe"]
+    fn production_appcontainer_e4_reparse_containment() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let base = std::env::temp_dir().join(format!("maia-m0165-e4r-{}", std::process::id()));
+        fs::create_dir_all(base.join("candidate/target")).unwrap();
+        fs::create_dir_all(base.join("outside")).unwrap();
+        let base = base.canonicalize().unwrap();
+        let root = base.join("candidate");
+        let target = root.join("target");
+        let outside_dir = base.join("outside");
+        let outside_file = outside_dir.join("sentinel.txt");
+        fs::write(&outside_file, b"host-owned").unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let exe_dir = exe.parent().unwrap().to_path_buf();
+        // Positive control: the host itself can create this mount point.
+        create_mount_point(&base.join("host-control"), &outside_dir)
+            .expect("host mount point control");
+        fs::remove_dir(base.join("host-control")).unwrap();
+        let outside_before = tree_sddl(&outside_dir);
+
+        for mode in ["reparse-create", "reparse-write"] {
+            let mut environment = production_environment(&target);
+            for (key, value) in [
+                (HELPER_MODE, OsString::from(mode)),
+                ("MAIA_E4_TARGET", target.as_os_str().to_owned()),
+                ("MAIA_E4_OUTSIDE_DIR", outside_dir.as_os_str().to_owned()),
+                ("MAIA_E4_OUTSIDE_FILE", outside_file.as_os_str().to_owned()),
+            ] {
+                environment.push((OsString::from(key), value));
+            }
+            let run = super::windows_job::run_restricted_process(
+                &exe,
+                &[
+                    "--exact".into(),
+                    "tests::contained_process_tree_helper".into(),
+                    "--nocapture".into(),
+                    "--test-threads=1".into(),
+                ],
+                &root,
+                &target,
+                std::slice::from_ref(&exe_dir),
+                &environment,
+                Duration::from_secs(60),
+                || false,
+            )
+            .expect("production containment");
+            let stderr = String::from_utf8_lossy(&run.stderr);
+            let line = stderr
+                .lines()
+                .find(|line| line.starts_with("PRODUCTION_E4_REPARSE"))
+                .unwrap_or("missing probe output");
+            eprintln!(
+                "PRODUCTION_E4_REPARSE_RUN mode={mode} completion={:?} cleanup_verified={} {line}",
+                run.completion, run.cleanup_verified
+            );
+            assert_eq!(run.completion, Completion::Exited(0), "{mode}: {stderr}");
+            if mode == "reparse-create" {
+                for expected in [
+                    "junction=denied:",
+                    "inner_junction=created",
+                    "dir_symlink=denied:",
+                    "file_symlink=denied:",
+                    "hardlink=denied:",
+                ] {
+                    assert!(line.contains(expected), "{expected}: {line}");
+                }
+            } else {
+                assert!(!line.contains("=written"), "{line}");
+            }
+            assert!(run.cleanup_verified, "{mode} cleanup");
+            let links = fs::read_dir(&target)
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .filter(|entry| {
+                    entry.file_type().unwrap().is_symlink()
+                        || entry.file_name() == "hardlink"
+                        || entry.file_name() == "junction"
+                })
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            eprintln!("PRODUCTION_E4_REPARSE_HOST mode={mode} links_in_target={links:?}");
+            assert_eq!(
+                fs::read(&outside_file).unwrap(),
+                b"host-owned",
+                "{mode}: outside file changed"
+            );
+            assert_eq!(
+                fs::read_dir(&outside_dir).unwrap().count(),
+                1,
+                "{mode}: outside directory gained an entry"
+            );
+            assert_eq!(
+                tree_sddl(&outside_dir),
+                outside_before,
+                "{mode}: outside DACL"
+            );
+        }
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[repr(C)]
