@@ -3031,7 +3031,7 @@ containment:
   candidate_or_environment_fallback: forbidden
   unavailable_capability: fail_closed
   achieved_identity_claim: per_run_appcontainer_and_job_only_after_host_readiness_attestation; tier1_unavailable_otherwise
-  stronger_isolation_capabilities: available_only_after_host_readiness_probe_and_production_e4_verification; unavailable_fails_closed
+  stronger_isolation_capabilities: unavailable_until_os_acl_and_no_network_are_verified
 resource_limits:
   max_concurrent_verifier_trees: 1
   max_command_wall_seconds: 900
