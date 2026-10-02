@@ -391,6 +391,13 @@ impl ConfigSnapshot {
                 std::fs::write(directory.join("rustfmt.toml"), [])
                     .map_err(|_| CommandResult::Infrastructure)?;
             }
+            if clippy.is_none() {
+                // Clippy searches CLIPPY_CONF_DIR and then every ancestor. An
+                // empty host-owned defaults file stops that search here, so a
+                // config file in a host ancestor can never apply silently.
+                std::fs::write(directory.join("clippy.toml"), [])
+                    .map_err(|_| CommandResult::Infrastructure)?;
+            }
             let clippy_evidence = clippy.map_or_else(
                 || "absent-defaults".to_owned(),
                 |hash| format!("sha256:{hash}"),
@@ -863,5 +870,185 @@ impl Tier1Verifier for FixedCargoTier1Verifier {
             verifier_identity: "fixed-cargo-tier1-v1".into(),
             checks: evidence,
         })
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    fn snapshot_resources(run_state_root: &Path) -> HostResources {
+        HostResources {
+            root: PathBuf::new(),
+            toolchain: PathBuf::new(),
+            toolchain_bin: PathBuf::new(),
+            vendor: PathBuf::new(),
+            msvc: PathBuf::new(),
+            msvc_bin: PathBuf::new(),
+            msvc_lib: PathBuf::new(),
+            sdk: PathBuf::new(),
+            sdk_um: PathBuf::new(),
+            sdk_ucrt: PathBuf::new(),
+            msvc_include: PathBuf::new(),
+            sdk_include_ucrt: PathBuf::new(),
+            sdk_include_um: PathBuf::new(),
+            sdk_include_shared: PathBuf::new(),
+            clippy_bundle: PathBuf::new(),
+            rustfmt_runtime: PathBuf::new(),
+            rustfmt_exe: PathBuf::new(),
+            run_state_root: run_state_root.to_owned(),
+        }
+    }
+
+    fn synthetic_workspace(base: &Path) -> PathBuf {
+        let workspace = base.join("ws");
+        std::fs::create_dir_all(workspace.join("apps/local-intelligence-host/src")).unwrap();
+        std::fs::write(
+            workspace.join("Cargo.toml"),
+            "[package]\nname = \"maia-local-intelligence-host\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\npath = \"apps/local-intelligence-host/src/lib.rs\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("Cargo.lock"),
+            "version = 4\n\n[[package]]\nname = \"maia-local-intelligence-host\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            workspace.join("apps/local-intelligence-host/src/lib.rs"),
+            "pub fn combine(first: u8, second: u8, third: u8) -> u8 {\n    first ^ second ^ third\n}\n",
+        )
+        .unwrap();
+        std::fs::canonicalize(workspace).unwrap()
+    }
+
+    #[test]
+    fn config_snapshot_always_holds_host_owned_clippy_and_rustfmt_files() {
+        let base = std::env::temp_dir().join(format!(
+            "maia-m0165-config-{}-{:x}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let workspace = synthetic_workspace(&base);
+        let resources = snapshot_resources(&base.join("run-state"));
+
+        let defaults = ConfigSnapshot::create(&resources, &workspace).unwrap();
+        assert_eq!(defaults.clippy_evidence, "absent-defaults");
+        assert_eq!(defaults.rustfmt_evidence, "absent-defaults");
+        assert_eq!(
+            std::fs::read(defaults.directory.join("clippy.toml")).unwrap(),
+            b""
+        );
+        assert_eq!(
+            std::fs::read(defaults.directory.join("rustfmt.toml")).unwrap(),
+            b""
+        );
+        defaults.remove().unwrap();
+
+        let candidate_config = b"too-many-arguments-threshold = 2\n";
+        std::fs::write(workspace.join("clippy.toml"), candidate_config).unwrap();
+        let copied = ConfigSnapshot::create(&resources, &workspace).unwrap();
+        assert_eq!(
+            std::fs::read(copied.directory.join("clippy.toml")).unwrap(),
+            candidate_config
+        );
+        assert_eq!(
+            copied.clippy_evidence,
+            format!("sha256:{:X}", Sha256::digest(candidate_config))
+        );
+        copied.remove().unwrap();
+
+        std::fs::write(workspace.join(".clippy.toml"), candidate_config).unwrap();
+        assert!(ConfigSnapshot::create(&resources, &workspace).is_err());
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    struct RemoveOnDrop(PathBuf);
+
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// Production Clippy stage through the real restricted runner: a candidate
+    /// clippy.toml must change the lint result, and with no candidate file a
+    /// config planted in a host ancestor of CLIPPY_CONF_DIR must not apply.
+    #[test]
+    #[ignore = "requires prepared M0.16.5 host resources and runs Clippy in AppContainer"]
+    fn production_clippy_applies_only_the_host_config_snapshot() {
+        let resources = HostResources::load().expect("prepared M0.16.5 host resources");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = PathBuf::from(format!(r"C:\MAIA\scratch\m0165c-{nonce}"));
+        let workspace = synthetic_workspace(&base);
+        let target = workspace.join("target/m0163-tier1");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&resources.run_state_root).unwrap();
+        let strict = b"too-many-arguments-threshold = 2\n";
+
+        std::fs::write(workspace.join("clippy.toml"), strict).unwrap();
+        let config = ConfigSnapshot::create(&resources, &workspace).unwrap();
+        let diagnostics = resources
+            .run_state_root
+            .join("diagnostics")
+            .join(config.directory.file_name().unwrap());
+        let strict_result = run(
+            &resources,
+            &config,
+            &workspace,
+            &target,
+            VerifierCommand::CargoClippyHostComponent,
+            &mut || false,
+        );
+        let strict_stderr = std::fs::read(diagnostics.join("clippy.stderr.bin")).unwrap();
+        let strict_stderr = String::from_utf8_lossy(&strict_stderr);
+        eprintln!(
+            "PRODUCTION_CLIPPY_CONFIG case=candidate-threshold-2 result={strict_result:?} evidence={} diagnostics={}",
+            config.clippy_evidence,
+            diagnostics.display()
+        );
+        config.remove().unwrap();
+        assert_eq!(strict_result, CommandResult::Failed(101));
+        assert!(
+            strict_stderr.contains("too_many_arguments"),
+            "{strict_stderr}"
+        );
+
+        std::fs::remove_file(workspace.join("clippy.toml")).unwrap();
+        let ancestor = resources.run_state_root.join("clippy.toml");
+        assert!(
+            !ancestor.exists(),
+            "host run-state root must not already hold a Clippy config"
+        );
+        std::fs::write(&ancestor, strict).unwrap();
+        let ancestor_guard = RemoveOnDrop(ancestor);
+        let config = ConfigSnapshot::create(&resources, &workspace).unwrap();
+        let diagnostics = resources
+            .run_state_root
+            .join("diagnostics")
+            .join(config.directory.file_name().unwrap());
+        let default_result = run(
+            &resources,
+            &config,
+            &workspace,
+            &target,
+            VerifierCommand::CargoClippyHostComponent,
+            &mut || false,
+        );
+        eprintln!(
+            "PRODUCTION_CLIPPY_CONFIG case=absent-candidate-with-planted-ancestor result={default_result:?} evidence={} diagnostics={}",
+            config.clippy_evidence,
+            diagnostics.display()
+        );
+        config.remove().unwrap();
+        drop(ancestor_guard);
+        assert!(!resources.run_state_root.join("clippy.toml").exists());
+        assert_eq!(default_result, CommandResult::Passed);
+        std::fs::remove_dir_all(base).unwrap();
     }
 }
