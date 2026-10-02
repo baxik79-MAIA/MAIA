@@ -1,5 +1,6 @@
 //! Fixed-command Windows containment adapters for the evolution host.
-//! Restricted runs use a zero-capability AppContainer plus Job Object containment.
+//! Restricted runs use a per-run AppContainer whose only capability is the
+//! exact null-stdin resource capability, plus Job Object containment.
 use std::ffi::OsString;
 use std::path::Path;
 use std::time::Duration;
@@ -1488,6 +1489,9 @@ mod tests {
         if mode == "exit" {
             return;
         }
+        if mode == "fail" {
+            std::process::exit(3);
+        }
         if mode == "emit-output" {
             use std::io::Write;
             std::io::stdout().write_all(b"stdout-begin\n").unwrap();
@@ -1705,62 +1709,53 @@ mod tests {
         let canonical_file = path("MAIA_E4_CANONICAL_FILE");
         let vendor_file = path("MAIA_E4_VENDOR_FILE");
         let port: u16 = std::env::var("MAIA_E4_PORT").unwrap().parse().unwrap();
+        let writable = |file: &Path| fs::OpenOptions::new().write(true).open(file).is_ok();
         let target_write = fs::write(target.join("e4-target-write.txt"), b"synthetic").is_ok();
-        let workspace_write = fs::OpenOptions::new()
+        let workspace_write = writable(&workspace_file);
+        let workspace_create = fs::OpenOptions::new()
             .write(true)
-            .open(workspace_file)
+            .create_new(true)
+            .open(workspace_file.with_file_name("e4-workspace-create.txt"))
             .is_ok();
-        let protected_read = fs::read(protected_file).is_ok();
-        let canonical_read = fs::read(canonical_file).is_ok();
+        let protected_read = fs::read(&protected_file).is_ok();
+        let protected_write = writable(&protected_file);
+        let canonical_read = fs::read(&canonical_file).is_ok();
+        let canonical_write = writable(&canonical_file);
         let vendor_read = fs::read(&vendor_file).is_ok();
-        let vendor_write = fs::OpenOptions::new().write(true).open(vendor_file).is_ok();
+        let vendor_write = writable(&vendor_file);
         let null_read = fs::File::open("NUL").is_ok();
-        let endpoint = SocketAddr::from(([127, 0, 0, 1], port));
-        let network_connected =
-            TcpStream::connect_timeout(&endpoint, Duration::from_secs(2)).is_ok();
+        let loopback = SocketAddr::from(([127, 0, 0, 1], port));
+        let loopback_result = TcpStream::connect_timeout(&loopback, Duration::from_secs(2));
+        // TEST-NET-1 (RFC 5737) is never routed; a denied socket fails before
+        // any reply could arrive, while an allowed one would only time out.
+        let external = SocketAddr::from(([192, 0, 2, 1], 443));
+        let external_result = TcpStream::connect_timeout(&external, Duration::from_secs(2));
+        let network_connected = loopback_result.is_ok() || external_result.is_ok();
+        let error_kind = |result: &std::io::Result<TcpStream>| match result {
+            Ok(_) => "connected".to_owned(),
+            Err(error) => format!("{:?}/{:?}", error.kind(), error.raw_os_error()),
+        };
         let passed = target_write
             && !workspace_write
+            && !workspace_create
             && !protected_read
+            && !protected_write
             && !canonical_read
+            && !canonical_write
             && vendor_read
             && !vendor_write
             && null_read
             && !network_connected;
         eprintln!(
-            "PRODUCTION_E4 target_write={target_write} workspace_write={workspace_write} protected_read={protected_read} canonical_read={canonical_read} vendor_read={vendor_read} vendor_write={vendor_write} null_read={null_read} network_connected={network_connected} passed={passed}"
+            "PRODUCTION_E4 target_write={target_write} workspace_write={workspace_write} workspace_create={workspace_create} protected_read={protected_read} protected_write={protected_write} canonical_read={canonical_read} canonical_write={canonical_write} vendor_read={vendor_read} vendor_write={vendor_write} null_read={null_read} network_connected={network_connected} loopback={} external={} passed={passed}",
+            error_kind(&loopback_result),
+            error_kind(&external_result)
         );
         assert!(passed, "production E4 AppContainer isolation");
         fs::remove_file(target.join("e4-target-write.txt")).unwrap();
     }
 
-    #[test]
-    #[ignore = "explicit M0.16.5 production AppContainer E4 isolation probe"]
-    fn production_appcontainer_e4_isolation() {
-        use std::net::TcpListener;
-
-        let _guard = TEST_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let root = std::env::temp_dir().join(format!("maia-m0165-e4-{}", std::process::id()));
-        let target = root.join("target");
-        fs::create_dir_all(&target).unwrap();
-        let workspace_file = root.join("workspace-read-only.txt");
-        fs::write(&workspace_file, b"synthetic").unwrap();
-        let protected_file = root.with_extension("protected.txt");
-        fs::write(&protected_file, b"synthetic").unwrap();
-        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap()
-            .to_path_buf();
-        let canonical_file = repo.join("Cargo.toml");
-        let vendor =
-            PathBuf::from(r"C:\MAIA\restricted-verifier-depot\vendor\m0165-r5v-generated-20260928");
-        let vendor_file = vendor.join("ab_glyph/Cargo.toml");
-        assert!(vendor_file.is_file(), "prepared production vendor");
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let exe = std::env::current_exe().unwrap();
+    fn production_environment(target: &Path) -> Vec<(OsString, OsString)> {
         let system_root = std::env::var_os("SystemRoot")
             .or_else(|| std::env::var_os("WINDIR"))
             .expect("SystemRoot");
@@ -1807,6 +1802,38 @@ mod tests {
                 environment.push((key.into(), value));
             }
         }
+        environment
+    }
+
+    #[test]
+    #[ignore = "explicit M0.16.5 production AppContainer E4 isolation probe"]
+    fn production_appcontainer_e4_isolation() {
+        use std::net::TcpListener;
+
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!("maia-m0165-e4-{}", std::process::id()));
+        let target = root.join("target");
+        fs::create_dir_all(&target).unwrap();
+        let workspace_file = root.join("workspace-read-only.txt");
+        fs::write(&workspace_file, b"synthetic").unwrap();
+        let protected_file = root.with_extension("protected.txt");
+        fs::write(&protected_file, b"synthetic").unwrap();
+        let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .to_path_buf();
+        let canonical_file = repo.join("Cargo.toml");
+        let vendor =
+            PathBuf::from(r"C:\MAIA\restricted-verifier-depot\vendor\m0165-r5v-generated-20260928");
+        let vendor_file = vendor.join("ab_glyph/Cargo.toml");
+        assert!(vendor_file.is_file(), "prepared production vendor");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let exe = std::env::current_exe().unwrap();
+        let mut environment = production_environment(&target);
         for (key, value) in [
             (HELPER_MODE, OsString::from("production-e4")),
             ("MAIA_E4_TARGET", target.as_os_str().to_owned()),
@@ -1852,6 +1879,219 @@ mod tests {
         assert!(run.cleanup_verified);
         assert_eq!(run.completion, Completion::Exited(0));
         fs::remove_file(protected_file).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn security_descriptor_sddl(path: &Path) -> String {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Authorization::{
+            ConvertSecurityDescriptorToStringSecurityDescriptorW, GetNamedSecurityInfoW,
+            SE_FILE_OBJECT,
+        };
+        use windows_sys::Win32::Security::DACL_SECURITY_INFORMATION;
+
+        let name = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let mut descriptor = std::ptr::null_mut();
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        assert_eq!(status, 0, "read DACL of {}", path.display());
+        let mut text = std::ptr::null_mut();
+        let mut length = 0u32;
+        let converted = unsafe {
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                descriptor,
+                1,
+                DACL_SECURITY_INFORMATION,
+                &mut text,
+                &mut length,
+            )
+        };
+        assert_ne!(converted, 0, "convert DACL of {}", path.display());
+        let sddl =
+            String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(text, length as usize) });
+        unsafe {
+            LocalFree(text.cast());
+            LocalFree(descriptor);
+        }
+        sddl.trim_end_matches('\0').to_owned()
+    }
+
+    /// Exact DACL text for every entry below `root`, including `root` itself.
+    fn tree_sddl(root: &Path) -> Vec<(PathBuf, String)> {
+        let mut entries = vec![(root.to_owned(), security_descriptor_sddl(root))];
+        if root.is_dir() {
+            let mut children = fs::read_dir(root)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .collect::<Vec<_>>();
+            children.sort();
+            for child in children {
+                entries.extend(tree_sddl(&child));
+            }
+        }
+        entries
+    }
+
+    /// Per-profile AppContainer SIDs have eight subauthorities after S-1-15-2;
+    /// the well-known package SIDs (S-1-15-2-1, S-1-15-2-2) have one.
+    fn per_profile_package_sids(sddl: &str) -> Vec<String> {
+        sddl.match_indices("S-1-15-2-")
+            .map(|(index, _)| {
+                sddl[index..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit() || *c == '-' || *c == 'S')
+                    .collect::<String>()
+            })
+            .filter(|sid| sid.trim_end_matches('-').split('-').count() > 4)
+            .collect()
+    }
+
+    fn tier1_profile_mappings_for_current_process() -> Vec<String> {
+        let output = Command::new("reg")
+            .args([
+                "query",
+                r"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppContainer\Mappings",
+                "/s",
+                "/v",
+                "Moniker",
+            ])
+            .output()
+            .expect("query AppContainer mappings");
+        let prefix = format!("maia-tier1-{}-", std::process::id());
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.contains(&prefix))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Production-runtime E4 lifecycle: the real restricted runner (unique
+    /// AppContainer profile, null-stdin capability, temporary ACLs, Job) must
+    /// contain descendants and restore every temporary change after failure,
+    /// timeout, cancellation, and a root that exits while a descendant lives.
+    #[test]
+    #[ignore = "explicit M0.16.5 production AppContainer E4 lifecycle probe"]
+    fn production_appcontainer_e4_lifecycle_cleanup() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!("maia-m0165-e4l-{}", std::process::id()));
+        fs::create_dir_all(root.join("target")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let target = root.join("target");
+        fs::write(root.join("workspace-read-only.txt"), b"synthetic").unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let exe_dir = exe.parent().unwrap().to_path_buf();
+        let before_root = tree_sddl(&root);
+        let before_exe_dir = security_descriptor_sddl(&exe_dir);
+        let before_exe = security_descriptor_sddl(&exe);
+        assert!(tier1_profile_mappings_for_current_process().is_empty());
+
+        let cases: [(&str, &str, Duration, bool, Completion); 4] = [
+            (
+                "failure",
+                "fail",
+                Duration::from_secs(60),
+                false,
+                Completion::Exited(3),
+            ),
+            (
+                "timeout",
+                "spawn-and-sleep",
+                Duration::from_secs(20),
+                false,
+                Completion::TimedOut,
+            ),
+            (
+                "cancellation",
+                "spawn-and-sleep",
+                Duration::from_secs(120),
+                true,
+                Completion::Cancelled,
+            ),
+            (
+                "root-exit-with-descendant",
+                "spawn-and-exit",
+                Duration::from_secs(60),
+                false,
+                Completion::Exited(0),
+            ),
+        ];
+        for (label, mode, timeout, cancel_on_descendant, expected) in cases {
+            let pid_file = target.join(format!("{label}.pid"));
+            let mut environment = production_environment(&target);
+            environment.push((OsString::from(HELPER_MODE), OsString::from(mode)));
+            environment.push((
+                OsString::from(HELPER_PID_FILE),
+                pid_file.as_os_str().to_owned(),
+            ));
+            let started = std::time::Instant::now();
+            let run = super::windows_job::run_restricted_process(
+                &exe,
+                &[
+                    "--exact".into(),
+                    "tests::contained_process_tree_helper".into(),
+                    "--nocapture".into(),
+                    "--test-threads=1".into(),
+                ],
+                &root,
+                &target,
+                std::slice::from_ref(&exe_dir),
+                &environment,
+                timeout,
+                || cancel_on_descendant && pid_file.exists(),
+            )
+            .expect("production containment");
+            eprintln!(
+                "PRODUCTION_E4_LIFECYCLE case={label} completion={:?} cleanup_verified={} seconds={:.1}",
+                run.completion,
+                run.cleanup_verified,
+                started.elapsed().as_secs_f32()
+            );
+            assert_eq!(run.completion, expected, "{label}");
+            assert!(run.cleanup_verified, "{label} cleanup");
+            if mode != "fail" {
+                assert_process_ended(&pid_file);
+                eprintln!("PRODUCTION_E4_LIFECYCLE case={label} descendant_ended=true");
+            }
+            let after_root = tree_sddl(&root);
+            assert_eq!(after_root, before_root, "{label} candidate ACL restoration");
+            assert_eq!(
+                security_descriptor_sddl(&exe_dir),
+                before_exe_dir,
+                "{label}"
+            );
+            assert_eq!(security_descriptor_sddl(&exe), before_exe, "{label}");
+            for (path, sddl) in &after_root {
+                assert!(
+                    per_profile_package_sids(sddl).is_empty(),
+                    "{label} residual package SID on {}",
+                    path.display()
+                );
+            }
+            assert!(
+                tier1_profile_mappings_for_current_process().is_empty(),
+                "{label} AppContainer profile mapping"
+            );
+            eprintln!(
+                "PRODUCTION_E4_LIFECYCLE case={label} acl_exact=true residual_package_sid=0 profile_mapping=0"
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
