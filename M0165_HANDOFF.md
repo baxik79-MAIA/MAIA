@@ -76,3 +76,15 @@ No known functional blocker remains for the measured short-path production fixtu
   and Temp; Null capability ACE unchanged (1 exact read-only ACE); no verifier processes.
 - Next step: M0.16.6 is not started. Begin it only in a separately authorized session, after Architecture
   Owner review of `6dcf043`.
+
+## Architecture Owner Review (2026-10-02) — APPROVED_WITH_NONBLOCKING_FOLLOWUP
+
+- Report: `reports/evolution/M0_16_5_ARCHITECTURE_REVIEW.md`. M0.16.5 remains CLOSED_READY (LAB host).
+- Review commits: `35c1c87` exact Null ACE runtime check; `2854551` CI clippy, unprepared-host test,
+  non-Windows cfg; `cc64e50` reparse-escape probe; `9915127` spec reverts `stronger_isolation_capabilities`
+  to its M0.16.4 value, plus ADR-0048 corrections; then the review documentation commit.
+- Review evidence: `C:\MAIA\reports\evolution\m0165-host-preparation\architecture-review-20261002\`.
+- Integration (owner action): push the branch as a fast-forward → green `windows-validation` on the exact
+  SHA → PR to `main` → merge commit or fast-forward (no squash/rebase; reports cite SHAs). Not pushed.
+- Next: `reports/evolution/M0_16_6_START_BRIEF.md`. M0.16.6 is not started and has no canonical
+  definition yet.

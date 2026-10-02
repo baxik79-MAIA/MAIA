@@ -227,3 +227,22 @@ code, spec or host change has been made.
   supervisor run.
 - **Per-stage overhead.** Each stage spends about 150 s granting and restoring ACLs over the read-only
   resource trees; that overhead fits the 900 s per-command bound.
+
+## Addendum — Architecture Owner Review (2026-10-02)
+
+This audit is historical and is not rewritten. The independent review
+(`reports/evolution/M0_16_5_ARCHITECTURE_REVIEW.md`) returned **APPROVED_WITH_NONBLOCKING_FOLLOWUP** and
+amended the state described above:
+
+- §6: the `stronger_isolation_capabilities` rewrite from `6dcf043` was reverted to its M0.16.4 value
+  (`9915127`), because no runtime check consumes E4 evidence. The other two values and `output_capture`
+  stand.
+- §5: the runtime Null ACE check now requires exactly one exact ACE for the capability SID (`35c1c87`).
+  Before, it accepted extra broader ACEs.
+- §3: production E4 adds a reparse-point escape probe with positive controls (`cc64e50`). Junction,
+  symlink and hardlink escapes from `target` are denied.
+- §7: the branch was not CI-clean. Workspace Clippy with `-D warnings` failed, a default allocation test
+  required the prepared host, and the non-Windows build had a duplicate definition. All three were fixed
+  in `2854551`. CI-equivalent runs now pass (604 passed / 0 failed; all features 720 / 0).
+- §8: added follow-ups F1–F7, notably automatic orphan reconciliation after a host crash and durable
+  Gate attestation, which remains unimplemented.
