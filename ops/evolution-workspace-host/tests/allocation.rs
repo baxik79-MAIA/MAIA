@@ -1164,10 +1164,8 @@ fn production_supervisor_tier1_runs_all_stages_in_appcontainer_and_journals_deci
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let base = std::env::temp_dir().join(format!(
-        "maia-m0165-production-{}-{nonce}",
-        std::process::id()
-    ));
+    // Keep MSVC linker object paths below the legacy Windows path limit.
+    let base = PathBuf::from(format!(r"C:\MAIA\scratch\m0165p-{nonce}"));
     let candidate_root = base.join("evolution-candidates");
     fs::create_dir_all(&candidate_root).unwrap();
     let journal_path = base.join("evidence/evolution.jsonl");
@@ -1236,31 +1234,7 @@ fn production_supervisor_tier1_runs_all_stages_in_appcontainer_and_journals_deci
         operation: Operation::FunctionRewrite,
     };
     let result = mutate_and_verify(&mut candidate, &request.admission, &mutation, &mut host);
-    assert_eq!(
-        result.state,
-        ResultState::Tier1Passed,
-        "production result: {result:?}"
-    );
-    assert_eq!(
-        candidate.state(),
-        State::Active,
-        "Tier-1 PASS does not promote"
-    );
-    assert_eq!(
-        result.tier1.as_ref().expect("Tier-1 evidence").checks.len(),
-        REQUIRED_TIER1_CHECKS.len()
-    );
-    assert!(
-        result
-            .tier1
-            .as_ref()
-            .expect("Tier-1 evidence")
-            .checks
-            .iter()
-            .all(|check| check.outcome == CheckOutcome::Passed),
-        "checks={:?}",
-        result.tier1.as_ref().expect("Tier-1 evidence").checks
-    );
+    let candidate_state = candidate.state();
     assert_eq!(run(&repository, &["rev-parse", "HEAD"]), parent_commit);
     assert!(run(&repository, &["status", "--porcelain=v1"]).is_empty());
     drop(candidate);
@@ -1285,6 +1259,32 @@ fn production_supervisor_tier1_runs_all_stages_in_appcontainer_and_journals_deci
     eprintln!(
         "PRESERVED_PRODUCTION_JOURNAL={} SHA256={preserved_hash}",
         preserved_journal.display()
+    );
+
+    assert_eq!(
+        result.state,
+        ResultState::Tier1Passed,
+        "production result: {result:?}"
+    );
+    assert_eq!(
+        candidate_state,
+        State::Active,
+        "Tier-1 PASS does not promote"
+    );
+    assert_eq!(
+        result.tier1.as_ref().expect("Tier-1 evidence").checks.len(),
+        REQUIRED_TIER1_CHECKS.len()
+    );
+    assert!(
+        result
+            .tier1
+            .as_ref()
+            .expect("Tier-1 evidence")
+            .checks
+            .iter()
+            .all(|check| check.outcome == CheckOutcome::Passed),
+        "checks={:?}",
+        result.tier1.as_ref().expect("Tier-1 evidence").checks
     );
 
     let events = FileEvidenceJournal::read_events(&journal_path).unwrap();
