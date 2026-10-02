@@ -163,28 +163,9 @@ pub(super) fn null_stdin_capability_acl_available(capability_sid: *mut core::ffi
             &mut descriptor,
         )
     };
-    let mut found = false;
-    if status == 0 && !descriptor.is_null() && !dacl.is_null() {
-        for index in 0..unsafe { (*dacl).AceCount } {
-            let mut ace = std::ptr::null_mut();
-            if unsafe { GetAce(dacl, index as u32, &mut ace) } == 0 || ace.is_null() {
-                continue;
-            }
-            let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
-            let sid = unsafe { std::ptr::addr_of!((*allowed).SidStart).cast_mut().cast() };
-            if u32::from(unsafe {
-                (*ace.cast::<windows_sys::Win32::Security::ACE_HEADER>()).AceType
-            }) == ACCESS_ALLOWED_ACE_TYPE
-                && unsafe { (*ace.cast::<windows_sys::Win32::Security::ACE_HEADER>()).AceFlags }
-                    == 0
-                && unsafe { (*allowed).Mask } == FILE_GENERIC_READ
-                && unsafe { EqualSid(sid, capability_sid) } != 0
-            {
-                found = true;
-                break;
-            }
-        }
-    }
+    let found = status == 0
+        && !descriptor.is_null()
+        && unsafe { exact_null_capability_dacl(dacl, capability_sid) };
     unsafe {
         if !descriptor.is_null() {
             LocalFree(descriptor);
@@ -192,6 +173,41 @@ pub(super) fn null_stdin_capability_acl_available(capability_sid: *mut core::ffi
         CloseHandle(handle);
     }
     found
+}
+
+/// The device DACL must hold exactly one ACE naming the capability SID, and it
+/// must be a non-inherited allow ACE with exactly `FILE_GENERIC_READ`. Any
+/// further allow, deny or callback ACE for that SID fails closed.
+unsafe fn exact_null_capability_dacl(
+    dacl: *mut ACL,
+    capability_sid: *mut core::ffi::c_void,
+) -> bool {
+    if dacl.is_null() || capability_sid.is_null() {
+        return false;
+    }
+    let mut matching = 0usize;
+    let mut exact = false;
+    for index in 0..unsafe { (*dacl).AceCount } {
+        let mut ace = std::ptr::null_mut();
+        if unsafe { GetAce(dacl, index as u32, &mut ace) } == 0 || ace.is_null() {
+            return false;
+        }
+        let header = unsafe { *ace.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
+        // Allow, deny and their callback forms share the header, mask, SID layout.
+        if !matches!(header.AceType, 0 | 1 | 9 | 10) {
+            continue;
+        }
+        let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
+        let sid = unsafe { std::ptr::addr_of!((*allowed).SidStart).cast_mut().cast() };
+        if unsafe { EqualSid(sid, capability_sid) } == 0 {
+            continue;
+        }
+        matching += 1;
+        exact = u32::from(header.AceType) == ACCESS_ALLOWED_ACE_TYPE
+            && header.AceFlags == 0
+            && unsafe { (*allowed).Mask } == FILE_GENERIC_READ;
+    }
+    matching == 1 && exact
 }
 
 pub(super) struct AppContainerProfile {
@@ -549,6 +565,60 @@ pub(super) fn probe_directory_acl(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dacl_with(entries: &[(u32, u32, u32)], sid: *mut core::ffi::c_void) -> Vec<usize> {
+        use windows_sys::Win32::Security::{
+            ACL_REVISION, AddAccessAllowedAceEx, AddAccessDeniedAceEx, InitializeAcl,
+        };
+        let mut storage = vec![0usize; 128];
+        let acl = storage.as_mut_ptr().cast::<ACL>();
+        assert_ne!(
+            unsafe { InitializeAcl(acl, (storage.len() * 8) as u32, ACL_REVISION) },
+            0
+        );
+        for &(kind, flags, mask) in entries {
+            let added = unsafe {
+                if kind == 0 {
+                    AddAccessAllowedAceEx(acl, ACL_REVISION, flags, mask, sid)
+                } else {
+                    AddAccessDeniedAceEx(acl, ACL_REVISION, flags, mask, sid)
+                }
+            };
+            assert_ne!(added, 0);
+        }
+        storage
+    }
+
+    #[test]
+    fn null_capability_dacl_requires_one_exact_read_only_noninherited_ace() {
+        let capability = NullStdinCapability::derive().expect("named resource capability");
+        let other = AppContainerProfile::create().unwrap();
+        let sid = capability.sid();
+        let check = |entries: &[(u32, u32, u32)], ace_sid| {
+            let mut storage = dacl_with(entries, ace_sid);
+            unsafe { exact_null_capability_dacl(storage.as_mut_ptr().cast(), sid) }
+        };
+        assert!(check(&[(0, 0, FILE_GENERIC_READ)], sid));
+        assert!(!check(&[], sid));
+        assert!(!check(&[(0, 0, FILE_GENERIC_READ)], other.sid()));
+        assert!(!check(
+            &[(0, 0, FILE_GENERIC_READ | FILE_GENERIC_WRITE)],
+            sid
+        ));
+        assert!(!check(&[(0, OBJECT_INHERIT_ACE, FILE_GENERIC_READ)], sid));
+        assert!(!check(
+            &[(0, 0, FILE_GENERIC_READ), (0, 0, FILE_GENERIC_WRITE)],
+            sid
+        ));
+        assert!(!check(
+            &[(0, 0, FILE_GENERIC_READ), (0, 0, 0x0004_0000)],
+            sid
+        ));
+        assert!(!check(
+            &[(0, 0, FILE_GENERIC_READ), (1, 0, FILE_GENERIC_READ)],
+            sid
+        ));
+    }
 
     #[test]
     fn null_stdin_resource_capability_derives_exactly_one_sid() {
