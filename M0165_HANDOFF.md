@@ -61,3 +61,18 @@ No known functional blocker remains for the measured short-path production fixtu
 - Full `C:\MAIA` + per-user + Temp scan (note: Git Bash rewrites `/t`; use `MSYS_NO_PATHCONV=1` or PowerShell) found 61 explicit ACE paths for 11 stale per-run package SIDs on depot toolchain/vendor/msvc/sdk/compat/run-state, `C:\MAIA`, per-user clippy-r5/rustfmt-r5 and Temp fixtures. None belongs to the final run 1940. Includes the 1588 SID whose earlier recovery scanned only run-state, two unmapped SIDs with inheritable Modify on `run-state`, and a third MAIA mapping `MAIA.M0165.Probe.ae0ef8af...` (R5V scratch launcher).
 - Recovery tool extended (uncommitted until cleanup verifies): `-DeletedProfileSid` ACE-only mode and R5V probe profile names. Inspect records: `EVID\closure-audit-20261002\orphan-acl-cleanup\*-before.json`; apply log `orphan-acl-apply.txt`; wrapper `orphan-cleanup-wrapper.ps1`. Apply running in background at this checkpoint.
 - Draft report: `reports/evolution/M0_16_5_CLOSURE_AUDIT.md` (sections 4 and 7 pending). Remaining: finish cleanup, rescan, commit tool, rerun production supervisor on new HEAD (code under test changed), finalize report and verdict.
+
+## Final state (2026-10-02 ~11:05 Europe/Warsaw) — M0.16.5 CLOSED_READY
+
+- Verdict and full evidence index: `reports/evolution/M0_16_5_CLOSURE_AUDIT.md`. The two earlier sections
+  of this file are historical; the report supersedes them where they differ, e.g. on orphan profiles.
+- Commits this session: `03fc1fd` Clippy snapshot fix, `b198fe1` E4 probes, `6dcf043` contract alignment
+  (needs Architecture Owner review), `2847af1` recovery tool, `e1740ad` audit docs, then the final docs
+  commit. Nothing was pushed.
+- Confirmation production supervisor run on `e1740ad`: PASS in 668.22 s. Journal
+  `C:\MAIAeports\evolution\m0165-host-preparation\closure-audit-20261002\production-supervisor\production-supervisor-1790930359234855400.jsonl`,
+  SHA-256 `D24BE97D83AE3DC144059F6F4229BE4546BEC0BF062DD0F8AD6B830022B156AF`.
+- Host: 0 MAIA AppContainer mappings; 0 per-profile package-SID ACEs under `C:\MAIA`, `%LOCALAPPDATA%\MAIA`
+  and Temp; Null capability ACE unchanged (1 exact read-only ACE); no verifier processes.
+- Next step: M0.16.6 is not started. Begin it only in a separately authorized session, after Architecture
+  Owner review of `6dcf043`.

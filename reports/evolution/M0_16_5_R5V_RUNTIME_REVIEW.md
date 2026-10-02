@@ -213,3 +213,10 @@ The production adapter now derives that SID, checks that the host DACL contains 
 - `cargo test -p maia-evolution-workspace-host --lib --locked --offline`: 7 passed, 0 failed, 1 ignored in 355.86 s. The ignored case requires the prepared host resource. This is host-side workspace verification, not a production restricted Tier-1 pass.
 - Final `git diff --check`: passed. `python tools/validate_spec.py`: passed; 40 YAML files parsed, all contract checks passed.
 - Positive post-fix AppContainer reproducer, restricted component check, Clippy, targeted tests, E4 adversarial probes, and production journal decision remain pending the administrator-prepared exact device-null ACE. No system DACL change was made in this checkpoint.
+
+## Superseded by closure audit (2026-10-02)
+
+The OPEN / BLOCKED verdicts above are historical. The null-stdin capability was installed and production
+Tier-1 passed all four restricted stages, with E4 and host cleanup verified. The current verdict is in
+`reports/evolution/M0_16_5_CLOSURE_AUDIT.md`: **CLOSED_READY** on the prepared LAB host, with stated
+deployment constraints.

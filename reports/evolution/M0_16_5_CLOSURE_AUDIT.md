@@ -1,6 +1,9 @@
 # M0.16.5 Closure Audit — Production Restricted Tier-1
 
-**Verdict: PENDING (audit in progress).**
+**Verdict: M0.16.5 CLOSED_READY** on the prepared LAB host, with the deployment constraints in §8.
+Production Tier-1 passed all four restricted stages twice: in the audited run, and again in a confirmation
+run on the post-fix HEAD. Production E4 is complete. Host cleanup is independently verified. The contract
+change in §6 needs Architecture Owner review before merge. M0.16.6 was not started.
 
 Date: 2026-10-02 (Europe/Warsaw). Worktree `C:\MAIA\public-export\.local\m0160-supervisor`, branch
 `codex/m0165-restricted-runtime`, audit start HEAD `3735f2594b0c80a94c02b4ee3d134a1cd32c82dc`.
@@ -36,6 +39,21 @@ Journal `EVID\production-evidence-20261002\production-supervisor-179091958907847
   verified` and `AppContainer profile cleanup: verified`. No stream was truncated.
 - Protected surfaces: the test asserts canonical `HEAD` and an empty `git status` after the run, and the
   journal check proves the only worktree change was the allowlisted file.
+
+### Confirmation run on post-fix HEAD `e1740ad`
+
+The verifier code changed (§2), so the same ignored production test was re-run once from a clean checkout
+at `e1740adba26e64ab0ff1558c2391550e03ba997d` (run `22328-18daa9adc02902d8`, 668.22 s, exit 0):
+Rustfmt 149.7 s, component check 183.6 s, Clippy 154.6 s, targeted tests 173.1 s (25 passed). All four
+completed `Exited(0)` with `cleanup_verified=true`, an empty Job, verified ACL restoration and verified
+profile deletion. The new journal
+`EVID\closure-audit-20261002\production-supervisor\production-supervisor-1790930359234855400.jsonl`
+(SHA-256 `D24BE97D83AE3DC144059F6F4229BE4546BEC0BF062DD0F8AD6B830022B156AF`, 4,866 bytes) verifies
+independently: 6/6 entries, terminal `TIER1PASSED`, six checks PASS, `content_recorded=false`, no promotion.
+Diagnostics were copied beside it. Logs: `production-supervisor-e1740ad.stdout.txt` (SHA-256
+`6815B765…3068`) and `.stderr.txt` (`4F4C3452…4521`). Afterwards no verifier processes remained, no MAIA
+profile mapping existed, the depot, per-user resources and `C:\MAIA\scratch` held no per-profile package-SID
+ACE, and the fixture root and snapshot directory were removed.
 
 ## 2. Clippy configuration — finding and fix
 
@@ -173,7 +191,27 @@ appendix:
 
 ## 7. Verification run during the audit
 
-VERIFICATION_PENDING
+- `cargo fmt --all -- --check`, `git diff --check`, `python tools/validate_spec.py`,
+  `python tools/spec_guard.py` (40 YAML files, PASS), and `generate_document_fragments.py --check` all passed.
+- `maia-evolution-process-host` lib: 12 passed, 3 ignored. The ignored ones are explicit host probes, and
+  both E4 probes were run explicitly and passed.
+- `maia-evolution-workspace-host` lib: 8 passed, 2 ignored. The ignored ones are the prepared-host probe and
+  the production Clippy differential, which was run explicitly and passed.
+- Allocation integration (release, excluding the real-verifier entry test): 20 passed, 1 ignored. The
+  production supervisor test was run explicitly and passed on `e1740ad`.
+- `cargo clippy -D warnings` on the two host crates reports only lints that predate this audit
+  (too_many_arguments, collapsible_if, CreatePipe mut, useless format!). None is in the new code.
+  The product Clippy gate (maia-local-intelligence-host) passed inside the restricted runtime.
+- Null capability `-ValidateOnly` after all runs: identical (`null-capability-validate-final.txt`,
+  SHA-256 `0A924C5E…708A`).
+- C: free space 17,774,096,384 bytes at 2026-10-02T09:03Z.
+
+## 9. Next step (M0.16.6 — not started)
+
+Begin M0.16.6 only in a new, separately authorized session. Base it on this branch after Architecture
+Owner review of commit `6dcf043` (the protected-runtime contract delta) and the closure evidence index
+above. Its first action should be reading the M0.16.6 directive and spec, then a read-only plan. No M0.16.6
+code, spec or host change has been made.
 
 ## 8. Remaining constraints (not blockers)
 
