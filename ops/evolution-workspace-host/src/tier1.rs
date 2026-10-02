@@ -287,10 +287,10 @@ fn contains_reparse_point(path: &Path) -> bool {
     let mut current = PathBuf::new();
     for component in absolute.components() {
         current.push(component.as_os_str());
-        if let Ok(metadata) = std::fs::symlink_metadata(&current) {
-            if metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0 {
-                return true;
-            }
+        if let Ok(metadata) = std::fs::symlink_metadata(&current)
+            && (metadata.file_type().is_symlink() || metadata.file_attributes() & 0x400 != 0)
+        {
+            return true;
         }
     }
     false

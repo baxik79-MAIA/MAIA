@@ -72,6 +72,8 @@ pub fn run_restricted(
     Err(ContainmentUnavailable)
 }
 
+#[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 pub fn run_restricted(
     command: VerifierCommand,
     toolchain_bin: &Path,
@@ -119,6 +121,7 @@ pub fn run_restricted_captured(
 }
 
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 pub fn run_restricted_captured(
     command: VerifierCommand,
     toolchain_bin: &Path,
@@ -349,8 +352,8 @@ mod windows_job {
             {
                 return Err(ContainmentUnavailable);
             }
-            if let Some(security) = security {
-                if unsafe {
+            if let Some(security) = security
+                && unsafe {
                     UpdateProcThreadAttribute(
                         list,
                         0,
@@ -361,9 +364,8 @@ mod windows_job {
                         null(),
                     )
                 } == 0
-                {
-                    return Err(ContainmentUnavailable);
-                }
+            {
+                return Err(ContainmentUnavailable);
             }
             Ok(result)
         }
@@ -655,6 +657,7 @@ mod windows_job {
         .map(|run| run.completion)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn run_restricted_captured(
         command: VerifierCommand,
         toolchain_bin: &Path,
@@ -684,6 +687,7 @@ mod windows_job {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_mode(
         command: VerifierCommand,
         toolchain_bin: &Path,
@@ -729,7 +733,7 @@ mod windows_job {
                 let vendor = cargo_vendor.ok_or(ContainmentUnavailable)?;
                 let mut args = vec![
                     "--config".into(),
-                    format!("source.crates-io.replace-with=\"m0165-host-vendor\""),
+                    "source.crates-io.replace-with=\"m0165-host-vendor\"".into(),
                     "--config".into(),
                     format!(
                         "source.m0165-host-vendor.directory={:?}",
@@ -836,6 +840,7 @@ mod windows_job {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn run_restricted_process(
         program: &Path,
         arguments: &[String],
@@ -1359,8 +1364,8 @@ mod windows_job {
             drop(child_handles);
             return Err(ContainmentUnavailable);
         }
-        if let Some(security) = security {
-            if !verify_restricted_child(
+        if let Some(security) = security
+            && !verify_restricted_child(
                 process.hProcess,
                 job,
                 security.AppContainerSid,
@@ -1369,10 +1374,10 @@ mod windows_job {
                 } else {
                     unsafe { (*security.Capabilities).Sid }
                 },
-            ) {
-                let _ = terminate_job_and_wait(job, 1);
-                return Err(ContainmentUnavailable);
-            }
+            )
+        {
+            let _ = terminate_job_and_wait(job, 1);
+            return Err(ContainmentUnavailable);
         }
         let stdout_reader = start_reader(reader_handles.0.remove(0));
         let stderr_reader = start_reader(reader_handles.0.remove(0));
@@ -1564,12 +1569,12 @@ mod tests {
 
         let mut read = std::ptr::null_mut();
         let mut write = std::ptr::null_mut();
-        let mut security = SECURITY_ATTRIBUTES {
+        let security = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: std::ptr::null_mut(),
             bInheritHandle: 1,
         };
-        let created = unsafe { CreatePipe(&mut read, &mut write, &mut security, 0) };
+        let created = unsafe { CreatePipe(&mut read, &mut write, &security, 0) };
         if created == 0 {
             let error = unsafe { GetLastError() };
             eprintln!("PROBE Win32 CreatePipe: failed immediately win32={error}");
