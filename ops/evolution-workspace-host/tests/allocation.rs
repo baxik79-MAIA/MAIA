@@ -258,7 +258,15 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let base = std::env::temp_dir().join(format!("maia-m0163-{}-{nonce}", std::process::id()));
+        // Parallel tests can read the same 100 ns clock tick on Windows; the
+        // serial keeps every fixture root distinct, and create_dir refuses reuse.
+        static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let serial = SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "maia-m0163-{}-{nonce}-{serial}",
+            std::process::id()
+        ));
+        fs::create_dir(&base).unwrap();
         let repo = base.join("baseline");
         let root = base.join("evolution-candidates");
         fs::create_dir_all(&repo).unwrap();
