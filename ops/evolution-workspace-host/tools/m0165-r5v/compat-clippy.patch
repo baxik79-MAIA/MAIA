@@ -1,0 +1,25 @@
+diff --git a/src/tools/clippy/clippy_config/src/conf.rs b/src/tools/clippy/clippy_config/src/conf.rs
+index d910eb4..0825fe9 100644
+--- a/src/tools/clippy/clippy_config/src/conf.rs
++++ b/src/tools/clippy/clippy_config/src/conf.rs
+@@ -959,17 +959,17 @@ pub fn lookup_conf_file() -> io::Result<(Option<PathBuf>, Vec<String>)> {
+ 
+     // Start looking for a config file in CLIPPY_CONF_DIR, or failing that, CARGO_MANIFEST_DIR.
+     // If neither of those exist, use ".". (Update documentation if this priority changes)
+-    let mut current = env::var_os("CLIPPY_CONF_DIR")
++    let mut current = std::path::absolute(env::var_os("CLIPPY_CONF_DIR")
+         .or_else(|| env::var_os("CARGO_MANIFEST_DIR"))
+         .map_or_else(|| PathBuf::from("."), PathBuf::from)
+-        .canonicalize()?;
++    )?;
+ 
+     let mut found_config: Option<PathBuf> = None;
+     let mut warnings = vec![];
+ 
+     loop {
+         for config_file_name in &CONFIG_FILE_NAMES {
+-            if let Ok(config_file) = current.join(config_file_name).canonicalize() {
++            if let Ok(config_file) = std::path::absolute(current.join(config_file_name)) {
+                 match fs::metadata(&config_file) {
+                     Err(e) if e.kind() == io::ErrorKind::NotFound => {},
+                     Err(e) => return Err(e),

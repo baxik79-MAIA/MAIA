@@ -2,3 +2,7 @@
 # Imported evidence preserves source bytes, including original line endings.
 docs/project/directives/*.md -text -diff
 docs/project/milestone-reports/*.md -text -diff
+
+# The preserved unified diff contains a required leading blank-context marker.
+ops/evolution-workspace-host/tools/m0165-r5v/LadderR5V.cs text eol=lf
+ops/evolution-workspace-host/tools/m0165-r5v/compat-clippy.patch whitespace=-blank-at-eol

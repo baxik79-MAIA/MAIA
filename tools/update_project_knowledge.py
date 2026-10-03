@@ -253,7 +253,7 @@ def check_zip() -> list[str]:
     return errors
 
 
-def check_handbook(values: dict[str, str], *, require_generated_documentation: bool = True) -> list[str]:
+def check_handbook(*, require_generated_documentation: bool = True) -> list[str]:
     errors: list[str] = []
     for name in HANDBOOK_FILES:
         path = PROJECT_ROOT / name
@@ -302,8 +302,9 @@ def main() -> int:
     if args.checkout_check and args.sync_shared:
         parser.error("--checkout-check cannot sync integration mirrors")
 
-    values = facts()
-    errors = check_handbook(values, require_generated_documentation=not args.checkout_check)
+    # Checkout validation checks tracked handbook structure only. Rendering
+    # mirrors below still reads live Git facts, including the actual main ref.
+    errors = check_handbook(require_generated_documentation=not args.checkout_check)
     if args.checkout_check:
         if errors:
             fail("; ".join(errors))
@@ -316,7 +317,7 @@ def main() -> int:
         if args.sync_shared:
             sync_tree(SHARED_ROOT)
             sync_export()
-        errors = check_handbook(values)
+        errors = check_handbook()
         if args.sync_shared:
             errors.extend(check_tree(SHARED_ROOT))
             errors.extend(check_tree(EXPORT_ROOT))

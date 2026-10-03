@@ -2872,6 +2872,373 @@ persistence_semantics:
   exhausted_storage_busy: PersistenceError
 ```
 
+## A.evolution_mutation_tier1.yaml
+
+```yaml
+schema_version: 1
+milestone: M0.16.3
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md#3.0.2
+placement:
+  policy: ops/evolution-supervisor
+  host_mutation_and_verification_adapter: ops/evolution-workspace-host
+  core_dependency: forbidden
+  shipped_application_dependency: forbidden
+human_governance:
+  improvement_must_be_human_approved_before_mutation: true
+  approval_reference_required: true
+  approval_verified_by_protected_host: true
+  supervisor_and_kill_switch_outside_candidate_boundary: true
+evolvable_surface:
+  authority_model: positive_exact_path_allowlist
+  paths:
+    - apps/local-intelligence-host/src/lib.rs
+  operators:
+    - FUNCTION_REWRITE
+  absent_or_unclassified: deny
+  create_delete_rename: forbidden
+  tests_manifests_tooling_specs_governance_and_evaluators: protected
+mutation:
+  candidate_state_required: ACTIVE
+  tier0_outcome_required: ADMITTED
+  exact_candidate_and_workspace_identity_required: true
+  operation: unique_expected_text_replacement
+  expected_file_digest_required: true
+  line_endings: normalize_for_match_and_preserve_candidate_style
+  max_replacement_bytes: 65536
+  actual_blast_radius_rechecked: true
+  path_resolution: canonical_candidate_workspace_relative
+  traversal_absolute_paths_symlinks_and_escape: reject
+  canonical_host_or_protected_state_target: reject
+  git_authority: none
+tier1:
+  mandatory_checks:
+    - post_mutation_candidate_identity
+    - syntax_static_validation
+    - formatting_and_lint
+    - touched_component_build
+    - targeted_unit_and_contract_tests
+    - protected_surface_integrity
+  candidate_supplied_commands: forbidden
+  adapter_failure_or_timeout: INFRA_ERROR
+  missing_or_ambiguous_evidence: fail_closed
+  success_grants_promotion: false
+evidence:
+  durable_queryable_attempt_record_required: true
+  fields:
+    - candidate_id
+    - workspace_id
+    - generation_id
+    - hypothesis_id
+    - tier0_outcome_and_evidence_refs
+    - approval_reference
+    - requested_path_and_operation
+    - mutation_outcome_and_reason
+    - changed_file_paths_and_digests
+    - tier1_check_results_and_verifier_identity
+    - terminal_candidate_state_and_reason
+  raw_replacement_content: forbidden
+  credentials_prompts_and_secrets: forbidden
+state:
+  tier0_failure: discard_candidate_without_tier1
+  tier1_failure: REJECTED_then_discard_candidate
+  tier1_infrastructure_failure: INFRA_ERROR_then_discard_candidate
+  tier1_success: remain_active_without_promotion
+  rollback_baseline_implied: false
+authority_limits:
+  canonical_host_mutation: forbidden
+  supervisor_or_kill_switch_mutation: forbidden
+  git_commit_push_merge_or_protected_ref_change: forbidden
+  deployment_locked_mutation: forbidden
+  release_or_promotion_authority: forbidden
+  arbitrary_subprocess: forbidden
+  only_fixed_deterministic_tier1_adapter: allowed
+```
+
+## A.evolution_protected_runtime.yaml
+
+```yaml
+schema_version: 1
+milestone: M0.16.4
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md
+placement:
+  runtime_authority: protected_host_process
+  candidate_policy: ops/evolution-supervisor
+  windows_containment_adapter: ops/evolution-process-host
+  workspace_and_evidence_adapter: ops/evolution-workspace-host
+  core_dependency: forbidden
+  shipped_application_dependency: forbidden
+protected_state:
+  owner: protected_host_process
+  authority_storage: protected_host_process_memory
+  restart_without_attestation: fail_closed_locked_defaults
+  fields:
+    - runtime_profile
+    - evolution_enabled
+    - kill_switch_state
+    - supervisor_identity
+    - candidate_identity
+    - generation_id
+    - parent_commit
+    - reservation_identity_and_expiry
+    - tier0_admission_identity
+    - protected_path_assumptions
+    - human_approval_identity_and_validity
+    - canonical_repository_identity_and_state
+    - state_version
+  candidate_may_supply_or_change: false
+  unknown_or_ambiguous: fail_closed
+  startup_defaults:
+    runtime_profile: DEPLOYMENT_LOCKED
+    evolution_enabled: false
+    kill_switch_state: "ON"
+    supervisor_integrity: unverified
+    tier1_isolation: same_user_process_tree_contained
+    explicit_host_attestation_required: true
+  deployment_locked: deny_mutation_and_verification
+  candidate_profile_switch: forbidden
+gate_decision:
+  immutable_operation_snapshot: required
+  bind_fields: [runtime_profile, state_version, supervisor_identity, candidate_identity, generation_id, parent_commit, reservation_identity_and_expiry, tier0_admission_identity, protected_path_assumptions, human_approval_identity_and_validity, canonical_repository_identity_and_state]
+  revalidate_before: [mutation, tier1_start]
+  revalidate_after: [tier1]
+  invalidated_by: [profile_change, evolution_disable, kill_switch_change, supervisor_identity_change, candidate_identity_change, reservation_expiry, approval_revocation, tier0_evidence_change, protected_path_change, parent_change, canonical_repository_drift]
+kill_switch:
+  protected_owner_only: true
+  on_or_disabled_denies_new_mutation: true
+  disabled_denies_new_mutation: true
+  disabled_denies_new_tier1: true
+  running_verifier: terminate_containment_job
+  interruption_result: CANCELLED
+  candidate_operation: discard_candidate
+  preserve_and_flush_evidence: true
+  unknown_state: fail_closed
+containment:
+  platform: windows
+  process_tree: job_object
+  create_suspended_assign_before_resume: true
+  breakaway: forbidden
+  kill_on_owner_close: true
+  network: appcontainer_without_network_capabilities_required; unavailable_fails_closed
+  resource_capabilities:
+    exact_allowlist: [maia.evolution.tier1.null.stdin]
+    scope: device_null_read_only
+    host_ace: exact_capability_sid_persistent; admin_prepared; rollback_available
+  filesystem: appcontainer_acl_read_only_workspace_toolchain_and_writable_candidate_target_required; unavailable_fails_closed
+  capability_levels: [same_user_process_tree_contained, restricted_identity_network_and_filesystem]
+  minimum_tier1_level: restricted_identity_network_and_filesystem
+  inherited_handles: explicit_handle_list_null_stdin_and_host_owned_output_pipes_only
+  output_capture: host_drained_bounded_per_stream; persisted_outside_candidate_acl
+  candidate_or_environment_fallback: forbidden
+  unavailable_capability: fail_closed
+  achieved_identity_claim: per_run_appcontainer_and_job_only_after_host_readiness_attestation; tier1_unavailable_otherwise
+  stronger_isolation_capabilities: unavailable_until_os_acl_and_no_network_are_verified
+resource_limits:
+  max_concurrent_verifier_trees: 1
+  max_command_wall_seconds: 900
+  cpu_rate_percent: 75
+  job_memory_bytes: 4294967296
+  active_process_limit: 64
+  candidate_controls_limits: false
+  resource_exhaustion_result: RESOURCE_LIMIT
+  job_resource_notifications:
+    active_process_limit: JOB_OBJECT_MSG_ACTIVE_PROCESS_LIMIT
+    job_memory_limit: JOB_OBJECT_MSG_JOB_MEMORY_LIMIT
+    process_memory_limit: JOB_OBJECT_MSG_PROCESS_MEMORY_LIMIT
+  recognized_memory_termination_status:
+    - STATUS_COMMITMENT_LIMIT
+    - STATUS_NO_MEMORY
+  target_directory: candidate_scoped
+  cargo_network_mode: offline
+  environment: fixed_allowlist
+journal:
+  path_owner: protected_host
+  path_candidate_supplied: false
+  location: outside_canonical_repository_and_candidate_root
+  writer_lock: operating_system_exclusive_whole_file
+  lock_before_chain_validation: true
+  second_writer: INFRA_ERROR
+  crash_releases_lock: true
+  reopen_verifies_complete_hash_chain: true
+  corruption: fail_closed_without_append
+  authority_transition_flush_before_success: true
+  lock_or_storage_failure: INFRA_ERROR
+outcomes:
+  verification: [PASS, TEST_FAILURE, RESOURCE_LIMIT, INFRA_ERROR, CANCELLED, ISOLATION_UNAVAILABLE]
+  isolation_unavailable_operation: discard_candidate
+  isolation_unavailable_terminal_state: ISOLATION_UNAVAILABLE
+  cancellation_is_not_verification_failure: true
+  candidate_failure_operation: discard_candidate
+  cancellation_is_test_failure: false
+  tier1_pass_grants_promotion: false
+  rollback_baseline_implied: false
+authority_limits:
+  evolvable_paths: [apps/local-intelligence-host/src/lib.rs]
+  arbitrary_filesystem_write: forbidden
+  arbitrary_subprocess: forbidden
+  provider_or_round_table_access: forbidden
+  git_commit_push_merge_or_protected_ref_change: forbidden
+  deployment_locked_mutation: forbidden
+  promotion_deployment_or_active_version_change: forbidden
+```
+
+## A.evolution_supervisor.yaml
+
+```yaml
+schema_version: 1
+milestone: M0.16.0
+phase: contract_first_non_mutating
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md
+placement:
+  subsystem: development_operations
+  crate: ops/evolution-supervisor
+  core_dependency: forbidden
+  shipped_application_dependency: forbidden
+  hypothesis_ledger_generator_qualification_authority: advisory_only
+trust_boundary:
+  supervisor: outside_evolving_worker_mutable_boundary
+  worker_may_control_supervisor: false
+  worker_may_modify_supervisor_or_kill_switch: false
+  host_isolation_required_before_mutation: true
+  unknown_integrity_or_isolation: halt
+capability_profiles:
+  development_evolution: contract_review_only
+  deployment_locked: supervisor_absent_from_shipped_build_graph
+  runtime_reenable_by_deployed_instance: forbidden
+authority:
+  supervisor_owns:
+  - start_pause_stop
+  - kill_switch
+  - resource_ceilings
+  - snapshot_verification
+  - rollback_baseline
+  - protected_surface_enforcement
+  - candidate_lineage_verification
+  - integrity_heartbeat
+  - failure_backoff
+  - development_lineage_promotion
+  hypothesis_and_qualification_grant_mutation_authority: false
+  worker_may_self_classify_promotion_eligible: false
+preflight:
+  result: advisory_contract_review_only
+  success_grants_mutation_authority: false
+  required_evidence:
+  - development_evolution_profile
+  - supervisor_integrity
+  - host_isolation
+  - kill_switch_operational
+  - positive_evolvable_allowlist
+  - parent_recovery_point
+  - resource_budget_and_recovery_reserve
+  - protected_path_dry_run
+  - declared_operator
+  - declared_blast_radius
+  - hypothesis_evidence_refs
+  unknown_or_missing: reject
+  tier0_required_before_worktree_or_candidate_snapshot: true
+  tier0_complete_in_this_milestone: false
+  candidate_worktree_creation: forbidden
+  candidate_snapshot_creation: forbidden
+  mutation: forbidden
+  promotion: forbidden
+protected_surfaces:
+  unclassified: non_writable
+  worker_may_edit_policy_or_evaluator: false
+  worker_may_edit_resource_hard_ceiling: false
+  evolvable_allowlist: []
+kill_switch:
+  unreadable_or_unknown: halt
+  worker_may_reset: false
+  emergency_result: HALTED
+release_boundary:
+  development_promotion_is_release: false
+  release_authority: external_human_controlled
+  locked_artifact_can_reenable_evolution: false
+```
+
+## A.evolution_tier0.yaml
+
+```yaml
+schema_version: 1
+milestone: M0.16.1
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md#3.0.1
+placement: ops/evolution-supervisor
+phase: admission_only_non_mutating
+ordered_checks:
+  - kill_switch_and_supervisor_state
+  - hypothesis_admission_completeness
+  - refuted_or_recently_rejected_ledger_hit
+  - protected_path_dry_run
+  - plan_blast_radius
+  - budget_reservation
+  - parent_recovery_point_verification
+  - scratch_static_apply
+outcomes: [ADMITTED, REJECTED, INFRA_ERROR, HALT_REQUIRED]
+rejection_record:
+  required: true
+  machine_readable_reason: true
+  evidence_refs: true
+  recording_failure: INFRA_ERROR
+boundaries:
+  unknown_check: fail_closed
+  candidate_worktree_before_admission: forbidden
+  candidate_snapshot_before_admission: forbidden
+  real_source_mutation: forbidden
+  git_commit_push_promotion: forbidden
+  provider_and_round_table_calls: forbidden
+  arbitrary_subprocess: forbidden
+  deployment_locked_mutation: forbidden
+  supervisor_outside_worker_mutable_boundary: true
+  active_evolvable_allowlist: empty_in_m0_16_1
+  admitted_grants_mutation_authority: false
+```
+
+## A.evolution_workspace.yaml
+
+```yaml
+schema_version: 1
+milestone: M0.16.2
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md#3.0.2
+placement:
+  policy: ops/evolution-supervisor
+  host_adapter: ops/evolution-workspace-host
+  core_dependency: forbidden
+  shipped_application_dependency: forbidden
+admission:
+  required_outcome: ADMITTED
+  exact_plan_binding_revalidated_by_protected_host: true
+  supervisor_ready_at_allocation: true
+  parent_identity_and_source_reverified: true
+  reservation_live_and_bound: true
+  protected_paths_rechecked: true
+  unknown_or_adapter_error: fail_closed
+identity_fields: [candidate_workspace_id, generation_id, hypothesis_id, parent_id, parent_kind, parent_snapshot_id, parent_source_commit, declared_operator, proposed_paths, proposed_symbols, estimated_changed_lines, max_changed_lines, max_files, semantic_fingerprint, implementation_fingerprint, profiling_fingerprint, evidence_refs, reservation_id, created_sequence]
+lifecycle:
+  states: [REQUESTED, ALLOCATED, ACTIVE, CLOSED]
+  transitions:
+    REQUESTED: [ALLOCATED, CLOSED]
+    ALLOCATED: [ACTIVE, CLOSED]
+    ACTIVE: [CLOSED]
+    CLOSED: []
+  terminal_outcomes: [REJECTED, CANCELLED, INFRA_ERROR]
+  candidate_failure_operation: discard_candidate
+  rollback_baseline_implied: false
+host:
+  workspace_root: dedicated_maia_controlled_candidate_root
+  path_or_identity_collision: reject
+  canonical_main_and_other_candidates: untouched
+  candidate_scoped_cleanup: deterministic_idempotent
+  evidence_preserved_before_cleanup: true
+  no_worker_execution_in_milestone: true
+authority_limits:
+  protected_surface_write: forbidden
+  supervisor_write: forbidden
+  git_commit_push_promotion: forbidden
+  release_authority: forbidden
+  deployment_locked_allocation: forbidden
+  provider_calls: forbidden
+  source_mutation_logic: forbidden
+```
+
 ## A.execution.yaml
 
 ```yaml

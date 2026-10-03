@@ -1,0 +1,32 @@
+schema_version: 1
+milestone: M0.16.1
+authority: docs/project/directives/MAIA_Architecture_Amendment_Autonomous_Evolution_Deployment_Lock_v5.1.md#3.0.1
+placement: ops/evolution-supervisor
+phase: admission_only_non_mutating
+ordered_checks:
+  - kill_switch_and_supervisor_state
+  - hypothesis_admission_completeness
+  - refuted_or_recently_rejected_ledger_hit
+  - protected_path_dry_run
+  - plan_blast_radius
+  - budget_reservation
+  - parent_recovery_point_verification
+  - scratch_static_apply
+outcomes: [ADMITTED, REJECTED, INFRA_ERROR, HALT_REQUIRED]
+rejection_record:
+  required: true
+  machine_readable_reason: true
+  evidence_refs: true
+  recording_failure: INFRA_ERROR
+boundaries:
+  unknown_check: fail_closed
+  candidate_worktree_before_admission: forbidden
+  candidate_snapshot_before_admission: forbidden
+  real_source_mutation: forbidden
+  git_commit_push_promotion: forbidden
+  provider_and_round_table_calls: forbidden
+  arbitrary_subprocess: forbidden
+  deployment_locked_mutation: forbidden
+  supervisor_outside_worker_mutable_boundary: true
+  active_evolvable_allowlist: empty_in_m0_16_1
+  admitted_grants_mutation_authority: false

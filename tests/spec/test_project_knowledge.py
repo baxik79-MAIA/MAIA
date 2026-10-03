@@ -5,6 +5,7 @@ import importlib.util
 import tempfile
 import hashlib
 import json
+import sys
 from unittest.mock import patch
 
 
@@ -23,6 +24,17 @@ spec = importlib.util.spec_from_file_location("knowledge", ROOT / "tools/update_
 knowledge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(knowledge)
 
+DETERMINISTIC_FACTS = {
+    "PRODUCT_VERSION": "1.7.0",
+    "BRANCH": "synthetic-branch",
+    "HEAD": "a" * 40,
+    "WORKING_TREE": "clean",
+    "RECENT_COMMITS": "aaaaaaa synthetic commit",
+    "MAIN_HEAD": "b" * 40,
+    "LATEST_ACCEPTED_MILESTONE": "M0.16.2",
+    "NEXT_APPROVED_STEP": "CI portability repair",
+}
+
 
 class ProjectKnowledgeTests(unittest.TestCase):
     def test_required_handbook_and_reference_files_exist(self):
@@ -40,6 +52,21 @@ class ProjectKnowledgeTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_checkout_check_does_not_require_live_main_ref(self):
+        with patch.object(knowledge, "facts", side_effect=AssertionError("checkout check read Git facts")), \
+             patch.object(sys, "argv", ["update_project_knowledge.py", "--checkout-check"]):
+            self.assertEqual(knowledge.main(), 0)
+
+    def test_rendering_does_not_invent_main_head(self):
+        def no_main(*args):
+            if args == ("rev-parse", "refs/heads/main"):
+                raise SystemExit(1)
+            return "synthetic"
+
+        with patch.object(knowledge, "git", side_effect=no_main):
+            with self.assertRaises(SystemExit):
+                knowledge.facts()
+
     def test_checkout_check_rejects_integration_sync(self):
         result = subprocess.run(
             ["python", "tools/update_project_knowledge.py", "--checkout-check", "--sync-shared"],
@@ -55,7 +82,8 @@ class ProjectKnowledgeTests(unittest.TestCase):
             root = Path(tmp).resolve()
             shared, export = root / "shared", root / "export"
             archive = root / "MAIA_Project_Knowledge.zip"
-            with patch.object(knowledge, "SHARED_ROOT", shared), \
+            with patch.object(knowledge, "facts", return_value=DETERMINISTIC_FACTS), \
+                 patch.object(knowledge, "SHARED_ROOT", shared), \
                  patch.object(knowledge, "EXPORT_ROOT", export), \
                  patch.object(knowledge, "EXPORT_ZIP", archive):
                 knowledge.sync_tree(shared)
@@ -90,7 +118,8 @@ class ProjectKnowledgeTests(unittest.TestCase):
 
     def test_generator_does_not_rewrite_tracked_sources(self):
         before = {p: p.read_bytes() for p in PROJECT.rglob("*") if p.is_file()}
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(knowledge, "facts", return_value=DETERMINISTIC_FACTS):
             knowledge.sync_tree(Path(tmp).resolve())
         self.assertEqual(before, {p: p.read_bytes() for p in before})
 

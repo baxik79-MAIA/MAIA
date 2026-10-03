@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 from pathlib import Path
+from evolution_supervisor_contract import validate as validate_evolution_supervisor
+from evolution_tier0_contract import validate as validate_evolution_tier0
+from evolution_workspace_contract import validate as validate_evolution_workspace
+from evolution_mutation_tier1_contract import validate as validate_evolution_mutation_tier1
+from evolution_protected_runtime_contract import validate as validate_evolution_protected_runtime
 import sys, yaml, subprocess, shutil
 ROOT=Path(__file__).resolve().parents[1]
 SPEC=ROOT/'spec'
@@ -1644,6 +1649,12 @@ if m013_ids != {f'D{i:03d}' for i in range(1, 15)}:
 ids=[]
 for stage,items in loaded['acceptance.yaml']['releases'].items(): ids += [x['id'] for x in items]
 if len(ids)!=len(set(ids)): errors.append('acceptance.yaml: duplicate acceptance id')
+
+errors.extend(validate_evolution_supervisor(loaded.get('evolution_supervisor.yaml')))
+errors.extend(validate_evolution_tier0(loaded.get('evolution_tier0.yaml')))
+errors.extend(validate_evolution_workspace(loaded.get('evolution_workspace.yaml')))
+errors.extend(validate_evolution_mutation_tier1(loaded.get('evolution_mutation_tier1.yaml')))
+errors.extend(validate_evolution_protected_runtime(loaded.get('evolution_protected_runtime.yaml')))
 
 if errors:
     print('SPEC GUARD FAILED')

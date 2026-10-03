@@ -194,6 +194,20 @@ const OTHER: &[(&str, &str)] = &[
         "maia-roundtable-invoke",
         include_str!("../../ops/roundtable-invoke/Cargo.toml"),
     ),
+    // M0.16.0: contract-only development operations, never a shipped app.
+    (
+        "maia-evolution-supervisor",
+        include_str!("../../ops/evolution-supervisor/Cargo.toml"),
+    ),
+    (
+        "maia-evolution-workspace-host",
+        include_str!("../../ops/evolution-workspace-host/Cargo.toml"),
+    ),
+    // M0.16.4: OS-specific process-tree containment remains in the ops host boundary.
+    (
+        "maia-evolution-process-host",
+        include_str!("../../ops/evolution-process-host/Cargo.toml"),
+    ),
 ];
 
 const WORKSPACE_MANIFEST: &str = include_str!("../../Cargo.toml");
