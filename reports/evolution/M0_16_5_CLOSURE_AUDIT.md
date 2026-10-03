@@ -246,3 +246,10 @@ amended the state described above:
   in `2854551`. CI-equivalent runs now pass (604 passed / 0 failed; all features 720 / 0).
 - §8: added follow-ups F1–F7, notably automatic orphan reconciliation after a host crash and durable
   Gate attestation, which remains unimplemented.
+
+## Addendum — Integration gate (2026-10-03)
+
+The final production Tier-1 on `83365a5` (code tree `9cf95069…f767`) passed: journal SHA-256
+`348AC3CE3E9DF7B96866847B87FF3EECF0A61FF8CAC6C2A51BB0D8FD90A448B2`, chain valid, `TIER1PASSED`, every stage
+`cleanup_verified=true`. The gate found and fixed a DACL lost-update race in concurrent ACL probes (`83365a5`).
+It was the source of the recurring unmapped `run-state` grants (§4). Details are in the Architecture Review §9.

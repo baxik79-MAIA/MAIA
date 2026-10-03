@@ -187,3 +187,65 @@ Evidence files in `REV\` (SHA-256):
 corrections `35c1c87`, `2854551` and `cc64e50` are part of the approved M0.16.5 state. Follow-ups F1–F7
 are not acceptance conditions for M0.16.5. F1 and F5 should be scheduled before any non-LAB deployment
 of the restricted verifier.
+
+## 9. Integration gate (2026-10-03)
+
+**Qualified code:** commit `83365a5d052faa74fc647705dd770597f8bef489`, tree
+`9cf9506967fa192489b429e7114bf898d183f767`. Later commits change only `reports/evolution/*.md` and
+`M0165_HANDOFF.md`; `git diff 83365a5 HEAD` touches no other path. Evidence:
+`C:\MAIA\reports\evolution\m0165-host-preparation\integration-gate-20261003\` (`GATE\`).
+
+### Defect found at the gate and fixed (`83365a5`)
+
+The final Tier-1 run on `4ab0746` passed. The post-run scan nevertheless found an explicit inheritable
+Modify ACE on `run-state` for a deleted per-run package SID (`S-1-15-2-1151077204-…`). This is the same
+pattern as the two unmapped `run-state` SIDs cleaned up in the closure audit.
+
+- **Cause.** Temporary-ACE grant and restore is a read-modify-write of a shared host DACL. Concurrent
+  readiness ACL probes interleaved: the workspace-host test threads call `host_isolation_ready()` in
+  parallel. One owner restored a snapshot that still held the other's ACE, and both reported verified
+  cleanup. `run_restricted_process` also changed shared resource-root DACLs before taking the
+  cross-process verifier slot.
+- **Reproduced.** A new test with four concurrent probers leaked grants on 3 of 3 runs before the fix.
+- **Fix.** The cross-process verifier mutex is now taken before any profile or DACL change in
+  `run_restricted_process`, and around the readiness probe (120 s bounded wait; fails closed if the slot
+  is unavailable). The test passes on 5 of 5 isolated runs and the suite is stable at 14 passed. Re-running
+  the parallel workspace-host suite on the prepared host left no new grant.
+- **Host cleanup.** The leaked `run-state` ACE was removed with `-DeletedProfileSid` (1 explicit path,
+  verified). The pre-fix reproduction had also left six `maia-tier1-{20552,19076}-*` profiles, which the
+  probe deliberately keeps when its own restore check fails. Their temp folders were already deleted, and
+  the six profiles were removed with the exact-SID tool (0 ACE paths each, `ORPHAN_CLEANUP=VERIFIED`).
+  Records: `GATE\orphan-acl-cleanup\` (15 files).
+
+Because the runtime changed, the "exactly one final Tier-1" instruction was applied to the corrected code.
+The `4ab0746` run (PASS, journal `BD73C0FF…88D5`) is kept as superseded evidence.
+
+### Final production Tier-1 on `83365a5`
+
+- Run `15184-18db1e960543f424`.
+- Stages: Rustfmt 168.1 s, component check 194.6 s, Clippy 167.2 s, targeted tests 192.2 s (25 passed).
+- Every stage: `Exited(0)` and `cleanup_verified=true`, with 4/4 "Job empty", 4/4 "ACL restoration
+  verified" and 4/4 "profile cleanup verified".
+- Clippy ran with the host-owned snapshot `clippy.toml`, recorded as `absent-defaults`. That a candidate
+  config is actually applied is proven by the closure-audit differential.
+- Journal `GATE\production-supervisor-83365a5\production-supervisor-1791058899594694300.jsonl`, SHA-256
+  `348AC3CE3E9DF7B96866847B87FF3EECF0A61FF8CAC6C2A51BB0D8FD90A448B2`. Independently verified: 6/6 entries
+  in the chain, `TIER1PASSED`, six checks PASS, no promotion, `content_recorded=false`. Diagnostics are
+  copied beside it.
+- Logs: stdout `C82C9104…AAE3`, stderr `67841790…29DA`.
+
+### Short regression checks (full E4 not repeated; the change touches only slot ordering)
+
+- process-host unit suite: 14 passed, 4 ignored, including the exact Null ACE and concurrent-probe tests
+  (`A3BA7DCA…AA26`);
+- lifecycle E4 on `83365a5`: 4/4 cases with exact ACLs, 0 residual SIDs, 0 mappings (`DC93BD95…B1DD`).
+
+### Final host state
+
+- 0 verifier processes;
+- 0 MAIA AppContainer mappings;
+- 0 per-profile package-SID ACE lines under the depot, `%LOCALAPPDATA%\MAIA`, `C:\MAIA\scratch` and Temp
+  (`final-host-state-83365a5.txt` `8DB4AFBA…2D16`, `final-host-state-after-profile-cleanup.txt`
+  `D55CF7C4…FD68`);
+- Null capability: exactly one non-inherited read-only ACE, unchanged (`0A924C5E…708A`);
+- C: free space 12,235,431,936 bytes.

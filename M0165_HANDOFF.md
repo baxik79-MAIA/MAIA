@@ -88,3 +88,13 @@ No known functional blocker remains for the measured short-path production fixtu
   SHA → PR to `main` → merge commit or fast-forward (no squash/rebase; reports cite SHAs). Not pushed.
 - Next: `reports/evolution/M0_16_6_START_BRIEF.md`. M0.16.6 is not started and has no canonical
   definition yet.
+
+## Integration gate (2026-10-03)
+
+- Qualified code: `83365a5` (tree `9cf9506967fa192489b429e7114bf898d183f767`). Final Tier-1 PASS, journal
+  `C:\MAIA\reports\evolution\m0165-host-preparation\integration-gate-20261003\production-supervisor-83365a5\production-supervisor-1791058899594694300.jsonl`
+  (SHA-256 `348AC3CE…48B2`).
+- Gate fix `83365a5`: serialized verifier DACL mutations (lost-update race leaked run-state grants).
+- Host is clean: 0 mappings, 0 package-SID ACEs, 0 verifier processes, Null ACE exact.
+- Push/CI/PR status: see the final summary of the integration session. Merge is the owner's decision
+  (merge commit or fast-forward only).
