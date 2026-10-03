@@ -52,6 +52,12 @@ pub fn appcontainer_filesystem_acl_available(_path: &Path) -> bool {
 
 #[cfg(windows)]
 pub fn appcontainer_filesystem_acl_available(path: &Path) -> bool {
+    // DACL grant/restore is read-modify-write. Serialize it with every other
+    // verifier ACL mutation so concurrent probes cannot resurrect a dead
+    // package SID's grant; an unavailable slot fails closed.
+    let Ok(_slot) = windows_job::NamedVerifierSlot::acquire_within(Duration::from_secs(120)) else {
+        return false;
+    };
     windows_restricted::probe_directory_acl(path)
 }
 
@@ -287,6 +293,12 @@ mod windows_job {
     pub(super) struct NamedVerifierSlot(*mut core::ffi::c_void);
     impl NamedVerifierSlot {
         pub(super) fn acquire() -> Result<Self, ContainmentUnavailable> {
+            Self::acquire_within(Duration::ZERO)
+        }
+
+        /// The mutex is owned per thread and re-entrant for its owner, so a
+        /// holder may acquire it again; each guard releases once.
+        pub(super) fn acquire_within(wait: Duration) -> Result<Self, ContainmentUnavailable> {
             let name: Vec<u16> = "Local\\MAIA-Evolution-Tier1-Verifier-v1"
                 .encode_utf16()
                 .chain(iter::once(0))
@@ -295,7 +307,9 @@ mod windows_job {
             if handle.is_null() {
                 return Err(ContainmentUnavailable);
             }
-            let wait = unsafe { WaitForSingleObject(handle, 0) };
+            let wait = unsafe {
+                WaitForSingleObject(handle, u32::try_from(wait.as_millis()).unwrap_or(u32::MAX))
+            };
             if wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED {
                 unsafe { CloseHandle(handle) };
                 return Err(ContainmentUnavailable);
@@ -856,6 +870,10 @@ mod windows_job {
             .get_or_init(|| Mutex::new(()))
             .try_lock()
             .map_err(|_| ContainmentUnavailable)?;
+        // Hold the cross-process slot before any profile or DACL change, not
+        // only around process execution: grants on shared host roots are
+        // read-modify-write and must never interleave with another owner.
+        let _cross_process_slot = NamedVerifierSlot::acquire()?;
         let resource_capability = super::windows_restricted::NullStdinCapability::derive()
             .map_err(|_| {
                 eprintln!("Tier-1 null-stdin capability derivation failed");
@@ -2338,6 +2356,47 @@ mod tests {
             );
         }
         fs::remove_dir_all(base).unwrap();
+    }
+
+    /// Readiness ACL probes mutate a shared host directory's DACL. Concurrent
+    /// probes (parallel test threads, two hosts) must not lose an update and
+    /// leave a dead package SID's inheritable grant behind.
+    #[test]
+    fn concurrent_readiness_acl_probes_restore_the_exact_dacl() {
+        let _guard = TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let root = std::env::temp_dir().join(format!(
+            "maia-acl-race-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let before = security_descriptor_sddl(&root);
+        let workers = (0..4)
+            .map(|_| {
+                let root = root.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..8 {
+                        let _ = super::appcontainer_filesystem_acl_available(&root);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let after = security_descriptor_sddl(&root);
+        fs::remove_dir_all(&root).unwrap();
+        assert!(
+            per_profile_package_sids(&after).is_empty(),
+            "leaked grant: {after}"
+        );
+        assert_eq!(after, before);
     }
 
     #[repr(C)]
