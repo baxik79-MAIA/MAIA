@@ -276,3 +276,8 @@ verifier's pinned toolchain were not touched) and an empty `LOCALAPPDATA`:
 the dependency graph of `maia-local-intelligence-host`, `maia-evolution-workspace-host` or
 `maia-evolution-process-host`. The restricted runtime and the Tier-1 candidate build are therefore identical
 to the qualified tree, and the Tier-1 PASS on `83365a5` stands without a further run.
+- The next push run (37157676467) failed in `admission_and_volatile_checks_fail_before_workspace_creation`:
+  two parallel allocation fixtures shared a root, because the process id plus SystemTime nonce collided on
+  a 100 ns tick, and `git init` hit "File exists". The PR run on the same SHA (37157680109) was green.
+  Fixed in `6af37e3` with a per-process serial and `create_dir`. This is test-only code, outside the qualified
+  runtime.
