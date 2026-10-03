@@ -284,13 +284,20 @@ mod real {
         /// STARTED is left alone (it is in flight; the worker stops the child).
         fn close(&self) {
             self.0.raised.store(true, Ordering::SeqCst);
-            let _ = self
-                .0
-                .delivery
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |state| match state {
-                    DELIVERY_PENDING | DELIVERY_CLAIMED => Some(DELIVERY_ABANDONED),
-                    _ => None,
-                });
+            // Explicit CAS loop: same semantics as the former `fetch_update`,
+            // which Rust 1.99 deprecates in favour of the newer `try_update`.
+            let mut state = self.0.delivery.load(Ordering::SeqCst);
+            while matches!(state, DELIVERY_PENDING | DELIVERY_CLAIMED) {
+                match self.0.delivery.compare_exchange_weak(
+                    state,
+                    DELIVERY_ABANDONED,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => state = actual,
+                }
+            }
         }
         fn is_raised(&self) -> bool {
             self.0.raised.load(Ordering::SeqCst)
