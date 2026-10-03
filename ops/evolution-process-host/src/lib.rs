@@ -2396,7 +2396,11 @@ mod tests {
             per_profile_package_sids(&after).is_empty(),
             "leaked grant: {after}"
         );
-        assert_eq!(after, before);
+        // Compare the ACE list. Any SetNamedSecurityInfo write sets the DACL's
+        // auto-inherited control flag (`D:` becomes `D:AI`), which hosted
+        // runners' temp folders initially lack; it grants nothing.
+        let aces = |sddl: &str| sddl[sddl.find('(').unwrap_or(sddl.len())..].to_owned();
+        assert_eq!(aces(&after), aces(&before));
     }
 
     #[repr(C)]
