@@ -249,3 +249,30 @@ The `4ab0746` run (PASS, journal `BD73C0FF…88D5`) is kept as superseded eviden
   `D55CF7C4…FD68`);
 - Null capability: exactly one non-inherited read-only ACE, unchanged (`0A924C5E…708A`);
 - C: free space 12,235,431,936 bytes.
+
+### CI corrections after the push (2026-10-04)
+
+The first `windows-validation` run on `b050dcd` (runs 37153505221 push / 37153508192 pull_request) failed
+for two concrete reasons:
+
+1. **Toolchain change.** The hosted runner's stable toolchain moved to Rust 1.99.0, which deprecates
+   `AtomicU8::fetch_update`. Workspace Clippy with `-D warnings` therefore failed in
+   `infra/claude-code/src/runner.rs`, code that is unchanged since `main`. Fixed in `fac8b9d` with an
+   equivalent `compare_exchange_weak` loop.
+2. **Too-strict test comparison.** The new concurrent-probe test compared full SDDL. On the runner, the
+   temp folder starts without the DACL auto-inherited control flag (`D:` → `D:AI` after any write) while
+   the ACEs are identical; no grant leaked. Fixed in `7bbbe33` to compare the ACE list. The test also
+   failed inside the Round Table absence step, which runs the workspace tests.
+
+Verified locally with a pinned, additive `1.99.0` toolchain (default `stable` and the production
+verifier's pinned toolchain were not touched) and an empty `LOCALAPPDATA`:
+- workspace Clippy with `-D warnings`: clean (also clean on 1.98.1);
+- `cargo test --workspace`: 605 passed / 0 failed;
+- `--all-features`: 721 passed / 0 failed;
+- `verify_round_table_absent.py`: PROVEN.
+
+**Qualification scope.** The delta from qualified commit `83365a5` (tree `9cf95069…f767`) consists of one
+`#[cfg(test)]` assertion in `ops/evolution-process-host` and `infra/claude-code`. `maia-claude-code` is not in
+the dependency graph of `maia-local-intelligence-host`, `maia-evolution-workspace-host` or
+`maia-evolution-process-host`. The restricted runtime and the Tier-1 candidate build are therefore identical
+to the qualified tree, and the Tier-1 PASS on `83365a5` stands without a further run.
