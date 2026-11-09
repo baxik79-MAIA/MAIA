@@ -126,10 +126,11 @@ def main():
             ps = str(Path(os.environ['SYSTEMROOT']) / 'System32/WindowsPowerShell/v1.0/powershell.exe')
             ps_before = runtime(ps, True)
             source = str(candidate / 'payload')
-            ast = "$ErrorActionPreference='Stop';$r='" + source.replace("'", "''") + "';$all=@(Get-ChildItem -LiteralPath $r -Recurse -File|Where-Object{$_.Extension -in @('.ps1','.psm1')});foreach($p in $all){$t=$null;$e=$null;[void][Management.Automation.Language.Parser]::ParseFile($p.FullName,[ref]$t,[ref]$e);if($e.Count){throw ($p.FullName+':'+($e|Out-String))}};[pscustomobject]@{status='PS_AST_PASS';files=$all.Count}|ConvertTo-Json -Compress"
+            ast = "$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';$r='" + source.replace("'", "''") + "';$all=@(Get-ChildItem -LiteralPath $r -Recurse -File|Where-Object{$_.Extension -in @('.ps1','.psm1')});foreach($p in $all){$t=$null;$e=$null;[void][Management.Automation.Language.Parser]::ParseFile($p.FullName,[ref]$t,[ref]$e);if($e.Count){throw ($p.FullName+':'+($e|Out-String))}};[pscustomobject]@{status='PS_AST_PASS';files=$all.Count}|ConvertTo-Json -Compress"
             qa = []
             result['windows_memory_qa'] = qa
-            for label, args_ps in [('PS_AST', ['-EncodedCommand', base64.b64encode(ast.encode('utf-16-le')).decode()]), ('PS_MEMORY_WIRE', ['-File', str(candidate / 'payload/tests/Test-M4Wire.ps1'), '-SourceRoot', source])]:
+            wire = "$ProgressPreference='SilentlyContinue';$ErrorActionPreference='Stop';$LASTEXITCODE=0;& '" + str(candidate / 'payload/tests/Test-M4Wire.ps1').replace("'", "''") + "' -SourceRoot '" + source.replace("'", "''") + "';$ok=$?;if ($LASTEXITCODE -ne 0) {exit $LASTEXITCODE};if (-not $ok) {exit 1}"
+            for label, args_ps in [('PS_AST', ['-EncodedCommand', base64.b64encode(ast.encode('utf-16-le')).decode()]), ('PS_MEMORY_WIRE', ['-EncodedCommand', base64.b64encode(wire.encode('utf-16-le')).decode()])]:
                 command = [ps, '-NoLogo', '-NoProfile', '-NonInteractive', *args_ps]
                 try:
                     cp = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
@@ -139,10 +140,12 @@ def main():
                     raise
                 save(out / (label + '.stdout.log'), cp.stdout)
                 save(out / (label + '.stderr.log'), cp.stderr)
+                row = {'suite': label, 'exit_code': cp.returncode, 'stdout_sha256': sha(cp.stdout), 'stderr_sha256': sha(cp.stderr)}
+                qa.append(row)
                 need(cp.returncode == 0 and not cp.stderr, 'Windows memory QA child failed')
                 body = json.loads(cp.stdout.decode('utf-8-sig'))
                 need(body == {'status': 'PS_AST_PASS', 'files': 5} if label == 'PS_AST' else body.get('qualified') is True and body.get('count') == 19 and len(set(body.get('passed', []))) == 19, 'Windows memory QA exact count')
-                qa.append({'suite': label, 'exit_code': cp.returncode, 'stdout_sha256': sha(cp.stdout), 'stderr_sha256': sha(cp.stderr), 'result': body})
+                row['result'] = body
             need(runtime(ps, True) == ps_before, 'PowerShell runtime byte drift')
             result['powershell_runtime'] = ps_before
             result['windows_memory_qa_scope'] = 'AST5_WIRE19_MEMORY_ONLY_NOT_LABTOP_CAPSULE_POLICY_OR_NATIVE_PROOF'

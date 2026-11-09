@@ -21,7 +21,13 @@ the helper's unchanged archive verification, staging, suite-summary parser and
 owned-return functions, while invoking only the four already-reviewed pure
 suites. It records the hosted Python/Node file SHA before/after controls. On
 Windows it also performs AST5 and the existing memory-only wire19 controls and
-records PowerShell file SHA. These are hosted byte inventories, not the
+records PowerShell file SHA. Both finite PowerShell scripts suppress only
+progress display through `$ProgressPreference='SilentlyContinue'`. They retain
+`ErrorActionPreference='Stop'`, strict empty-stderr/count checks, and the same
+script policy; the wire wrapper propagates script failures and nonzero
+`LASTEXITCODE`. Returned child exit code and raw-log hashes are retained before
+checking the verdict, including a failing verdict. No CLIXML/error stream is
+ignored or filtered. These are hosted byte inventories, not the
 LABtop's Capsule/RuntimePins, policy check, executed-image, native process-tree
 or durability qualification. OS-owned hardlinks are inventoried only for the
 PowerShell runtime; all fixture/source inputs require one ordinary link.
@@ -57,14 +63,14 @@ repository visibility and policy still have to be confirmed by the coordinator.
 Input-only check (no test execution or staging):
 
 ```sh
-python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 21ff76b900afdef9a693789f946a786f848099d26f5f0b6cfba36759ea6543ad --preflight-only
+python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 d8de229a1074c4907f4b79c2f467e3ca49bb5c20fc4b9b232874f3ef66d42928 --preflight-only
 ```
 
 One Linux-only local validation of the new adapter uses an explicitly fresh
 root, never GitHub environment impersonation:
 
 ```sh
-python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 21ff76b900afdef9a693789f946a786f848099d26f5f0b6cfba36759ea6543ad --local-validation --local-root /absolute/fresh/adapter-check
+python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 d8de229a1074c4907f4b79c2f467e3ca49bb5c20fc4b9b232874f3ef66d42928 --local-validation --local-root /absolute/fresh/adapter-check
 ```
 
 That mode reports `hosted_ci_job_observed:false`, requires no GitHub environment,
