@@ -1,0 +1,22 @@
+{
+  "files": {
+    "M4_PUBLICATION_RESULT.json": {
+      "bytes": 1786,
+      "sha256": "8f24d81ae864729b78c30c5b50b6ad562224c04baa1339626cd62ad9208c25c9"
+    },
+    "MAIA-M5-DEV-STAGING-RC1.zip": {
+      "bytes": 244307,
+      "sha256": "572fa19a023a2cf4ab7c4005ee63916b4ffb816332f97dc1e4be9c98157a9244"
+    },
+    "hosted_rc.py": {
+      "bytes": 15275,
+      "sha256": "f59e0370a8522c50ac4bb8fe1cbfb41cbdb0e0a6155081b1a1cfe42b735d09d2"
+    },
+    "m5_rc.py": {
+      "bytes": 21448,
+      "sha256": "54a3d8a95a105ca86ca80916b9c2e573c9a4d3cef2297abe82cc02ee2b394339"
+    }
+  },
+  "profile": "SAME_UNSIGNED_RC_PORTABLE_CI_ONLY",
+  "schema": 1
+}
