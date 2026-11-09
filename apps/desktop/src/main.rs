@@ -24,6 +24,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 mod capture;
 mod design;
+mod supervisor_status;
 
 const LOCAL_ENDPOINT: &str = "127.0.0.1:11434";
 const LOCAL_MODEL: &str = "qwen3:4b-instruct-2507-q4_K_M";
@@ -190,6 +191,10 @@ struct MaiaDesktop {
     /// When the in-flight briefing was submitted, so the wait can show real
     /// elapsed time instead of an opaque spinner.
     briefing_started: Option<Instant>,
+    supervisor_projection: supervisor_status::Projection,
+    supervisor_job: Option<std::sync::mpsc::Receiver<supervisor_status::Projection>>,
+    last_supervisor_probe: Instant,
+    supervisor_sample_received: Instant,
 }
 
 impl Default for MaiaDesktop {
@@ -213,6 +218,12 @@ impl Default for MaiaDesktop {
             local_probe_job: None,
             warmed_local_model: false,
             briefing_started: None,
+            supervisor_projection: supervisor_status::Projection::unknown("NOT_OBSERVED"),
+            supervisor_job: None,
+            last_supervisor_probe: Instant::now()
+                .checked_sub(LOCAL_PROBE_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            supervisor_sample_received: Instant::now(),
             workspace: DEFAULT_WORKSPACE.into(),
             database_path: std::env::var("MAIA_ALPHA1_DATABASE")
                 .unwrap_or_else(|_| r"C:\MAIA\data\maia-alpha1.db".into()),
@@ -875,6 +886,37 @@ impl MaiaDesktop {
 
 impl eframe::App for MaiaDesktop {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        // Read-only telemetry has its own background refresh and never enters
+        // the briefing packet/provider or the canonical Task/Run state machines.
+        let supervisor_update = self.supervisor_job.as_ref().map(|job| job.try_recv());
+        match supervisor_update {
+            Some(Ok(mut next)) => {
+                next.preserve_confirmation_from(&self.supervisor_projection);
+                self.supervisor_projection = next;
+                self.supervisor_sample_received = Instant::now();
+                self.supervisor_job = None;
+            }
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                let mut next = supervisor_status::Projection::unknown("OBSERVATION_FAILED");
+                next.preserve_confirmation_from(&self.supervisor_projection);
+                self.supervisor_projection = next;
+                self.supervisor_job = None;
+            }
+            _ => {}
+        }
+        if self.supervisor_sample_received.elapsed() > Duration::from_secs(10) {
+            self.supervisor_projection.expire();
+        }
+        if self.supervisor_job.is_none()
+            && self.last_supervisor_probe.elapsed() >= LOCAL_PROBE_INTERVAL
+        {
+            self.last_supervisor_probe = Instant::now();
+            let (send, receive) = std::sync::mpsc::channel();
+            self.supervisor_job = Some(receive);
+            std::thread::spawn(move || {
+                let _ = send.send(supervisor_status::read_default());
+            });
+        }
         // Bounded periodic re-probe of local-model availability (Architecture
         // Desk - "GO - PROCEED AUTONOMOUSLY" Step 4; hardened per the
         // follow-up UI-thread-blocking review before Alpha 1 sign-off).
