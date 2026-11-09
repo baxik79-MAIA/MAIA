@@ -24,6 +24,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 mod capture;
 mod design;
+mod profile;
 mod supervisor_status;
 
 const LOCAL_ENDPOINT: &str = "127.0.0.1:11434";
@@ -198,7 +199,7 @@ struct MaiaDesktop {
 
 impl Default for MaiaDesktop {
     fn default() -> Self {
-        let preferences = fs::read_to_string(r"C:\MAIA\data\maia-alpha1-ui.json")
+        let preferences = fs::read_to_string(profile::preferences_path())
             .ok()
             .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok());
         Self {
@@ -357,15 +358,7 @@ fn log_failure_diagnostics(
         "{ts}\tattempt_id={attempt_id}\tkind={kind:?}\tdisposition={disposition:?}\ttechnical_reason={}\n",
         technical_reason.unwrap_or("<none>")
     );
-    let _ = fs::create_dir_all(r"C:\MAIA\reports");
-    if let Ok(mut file) = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(r"C:\MAIA\reports\maia_failure_diagnostics.log")
-    {
-        use std::io::Write as _;
-        let _ = file.write_all(line.as_bytes());
-    }
+    let _ = profile::append_diagnostics(&profile::diagnostics_path(), &line);
 }
 
 impl MaiaDesktop {
@@ -403,13 +396,10 @@ impl MaiaDesktop {
         }
     }
     fn save_preferences(&self) {
-        let _ = fs::create_dir_all(r"C:\MAIA\data");
-        let _ = fs::write(
-            r"C:\MAIA\data\maia-alpha1-ui.json",
-            format!(
-                r#"{{"language":"{}","dark":{}}}"#,
-                self.language, self.dark_theme
-            ),
+        let _ = profile::write_preferences(
+            &profile::preferences_path(),
+            &self.language,
+            self.dark_theme,
         );
     }
     fn store(&self) -> Result<SqliteStore, String> {
