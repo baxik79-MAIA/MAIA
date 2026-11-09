@@ -1,0 +1,71 @@
+name: Non-Windows canonical contracts and Core
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ubuntu-core-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MAIA_LIVE_CLAUDE_CODE: '0'
+      M0_8_LIVE_ANTHROPIC: '0'
+      PYTHONIOENCODING: utf-8
+      CORE_PACKAGES: >-
+        -p maia-domain -p maia-policy -p maia-orchestrator -p maia-store
+        -p maia-runtime -p maia-executor -p maia-assurance-router -p maia-briefing
+    steps:
+      - name: Check out the triggering revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Set up Node for cross-runtime binding vectors
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Record the actual revision and toolchain
+        run: |
+          git rev-parse HEAD
+          python --version
+          node --version
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup override set stable
+          rustc -Vv
+          cargo --version
+      - name: Install pinned canonical validation dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Validate canonical YAML and generated contract drift
+        run: python tools/spec_guard.py
+      - name: Formatting
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
+      - name: Default-feature Core and connector-boundary tests
+        if: ${{ !cancelled() }}
+        run: cargo test $CORE_PACKAGES --locked --no-fail-fast
+      - name: Core test-support features
+        if: ${{ !cancelled() }}
+        run: cargo test $CORE_PACKAGES --all-features --locked --offline --no-fail-fast
+      - name: Core Clippy including test-support code
+        if: ${{ !cancelled() }}
+        run: cargo clippy $CORE_PACKAGES --all-targets --all-features --locked --offline -- -D warnings
+      - name: Canonical spec and connector-boundary contract oracles
+        if: ${{ !cancelled() }}
+        run: python -m unittest discover -s tests/spec -p 'test*.py'
+      - name: Verify tracked contract and lockfile preservation
+        if: ${{ !cancelled() }}
+        run: |
+          git diff --check
+          git diff --exit-code -- Cargo.lock generated core/domain/src/generated

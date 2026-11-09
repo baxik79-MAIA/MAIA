@@ -1,0 +1,54 @@
+name: M5 exact internal RC
+
+on:
+  push:
+    branches: [codex/m5-rc-ci-20261109]
+    paths:
+      - ci/m5/**
+      - .github/workflows/m5-internal-rc.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m5-exact-rc-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  exact-rc:
+    name: Exact RC / ${{ matrix.os }}
+    if: github.repository == 'baxik79-MAIA/MAIA'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    steps:
+      - name: Checkout exact triggering revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: CPython 3.13.15
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13.15'
+          architecture: x64
+      - name: Node 24.19.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          package-manager-cache: false
+      - name: Verify exact RC, finite pure controls and owned return
+        run: python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 21ff76b900afdef9a693789f946a786f848099d26f5f0b6cfba36759ea6543ad
+      - name: Retain actual portable-control evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: m5-exact-rc-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
