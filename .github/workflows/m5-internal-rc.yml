@@ -42,7 +42,7 @@ jobs:
           node-version: '24.19.0'
           package-manager-cache: false
       - name: Verify exact RC, finite pure controls and owned return
-        run: python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 d8de229a1074c4907f4b79c2f467e3ca49bb5c20fc4b9b232874f3ef66d42928
+        run: python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 ddbf4f49981fa5c70d0dcca6a07c9abc3a0a398a696f81df6bf90b2a931b34b2
       - name: Retain actual portable-control evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

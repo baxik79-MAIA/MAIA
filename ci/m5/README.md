@@ -29,7 +29,18 @@ script policy; the wire wrapper propagates script failures and nonzero
 checking the verdict, including a failing verdict. No CLIXML/error stream is
 ignored or filtered. These are hosted byte inventories, not the
 LABtop's Capsule/RuntimePins, policy check, executed-image, native process-tree
-or durability qualification. OS-owned hardlinks are inventoried only for the
+or durability qualification.
+
+Windows fixture children receive canonical `TEMP`/`TMP` under the fresh
+report-owned `HOSTED_CI/child_temp` directory. The directory is created
+exclusively, checked through unchanged ordinary-parent rules, and resolved
+strictly before use. Both PowerShell children and all four pure suites inherit
+these two child-only overrides, including their descendants. The Python/Node
+suite environment remains otherwise scrubbed as before; no global environment,
+path guard, NTFS/reparse/link rule, test or artifact byte is changed. Inherited
+and effective temp paths are recorded for this actual job. The previous
+fixture's exact offending path was not logged; short-name/alias diagnosis is
+an inference, not a claim of observed 8.3 path evidence. OS-owned hardlinks are inventoried only for the
 PowerShell runtime; all fixture/source inputs require one ordinary link.
 
 The pure suites must report exactly23 M5,64 M3,98 M4 and1 controlled-DOM test,
@@ -63,14 +74,14 @@ repository visibility and policy still have to be confirmed by the coordinator.
 Input-only check (no test execution or staging):
 
 ```sh
-python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 d8de229a1074c4907f4b79c2f467e3ca49bb5c20fc4b9b232874f3ef66d42928 --preflight-only
+python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 ddbf4f49981fa5c70d0dcca6a07c9abc3a0a398a696f81df6bf90b2a931b34b2 --preflight-only
 ```
 
 One Linux-only local validation of the new adapter uses an explicitly fresh
 root, never GitHub environment impersonation:
 
 ```sh
-python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 d8de229a1074c4907f4b79c2f467e3ca49bb5c20fc4b9b232874f3ef66d42928 --local-validation --local-root /absolute/fresh/adapter-check
+python -I -S -B ci/m5/hosted_rc.py --manifest-sha256 ddbf4f49981fa5c70d0dcca6a07c9abc3a0a398a696f81df6bf90b2a931b34b2 --local-validation --local-root /absolute/fresh/adapter-check
 ```
 
 That mode reports `hosted_ci_job_observed:false`, requires no GitHub environment,

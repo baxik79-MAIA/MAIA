@@ -122,7 +122,19 @@ def main():
         tool.preflight(HERE / 'MAIA-M5-DEV-STAGING-RC1.zip', work, report)
         result['copy'] = tool.stage(HERE / 'MAIA-M5-DEV-STAGING-RC1.zip', work, report)
         candidate = work / 'candidate'
+        temp_overrides = {}
         if os.name == 'nt':
+            child_temp = report / 'child_temp'
+            need(not tool.entry(child_temp), 'fresh owned child temp directory')
+            child_temp.mkdir()
+            tool.parents(child_temp)
+            child_temp = child_temp.resolve(strict=True)
+            tool.parents(child_temp)
+            need(child_temp.parent == report.resolve(strict=True), 'canonical child temp remains report-owned')
+            temp_overrides = {'TEMP': str(child_temp), 'TMP': str(child_temp)}
+            result['child_temp_environment'] = {'scope': 'CHILD_PROCESS_ONLY_NO_GLOBAL_ENVIRONMENT_CHANGE', 'inherited': {k: os.environ.get(k) for k in ('TEMP', 'TMP')}, 'effective': dict(temp_overrides), 'ordinary_parents_checked': True}
+            ps_env = dict(os.environ)
+            ps_env.update(temp_overrides)
             ps = str(Path(os.environ['SYSTEMROOT']) / 'System32/WindowsPowerShell/v1.0/powershell.exe')
             ps_before = runtime(ps, True)
             source = str(candidate / 'payload')
@@ -133,7 +145,7 @@ def main():
             for label, args_ps in [('PS_AST', ['-EncodedCommand', base64.b64encode(ast.encode('utf-16-le')).decode()]), ('PS_MEMORY_WIRE', ['-EncodedCommand', base64.b64encode(wire.encode('utf-16-le')).decode()])]:
                 command = [ps, '-NoLogo', '-NoProfile', '-NonInteractive', *args_ps]
                 try:
-                    cp = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
+                    cp = subprocess.run(command, env=ps_env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
                 except subprocess.TimeoutExpired as exc:
                     save(out / (label + '.stdout.log'), exc.stdout or b'')
                     save(out / (label + '.stderr.log'), exc.stderr or b'')
@@ -152,6 +164,7 @@ def main():
         commands = [('M5_HELPERS', [python, '-I', '-S', '-B', '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_m5*.py', '-v']), ('M3_PURE', [python, '-I', '-S', '-B', '-m', 'unittest', 'discover', '-s', 'payload/baseline_m3', '-p', 'test_m3*.py', '-v']), ('M4_PURE', [python, '-I', '-S', '-B', '-m', 'unittest', 'discover', '-s', 'payload', '-p', 'test_m4*.py', '-v']), ('UI_CONTROLLED_DOM', [node, '--test', '--test-reporter=tap', 'payload/test_m4_ui.js'])]
         env = {k: v for k, v in os.environ.items() if k.upper() in ('SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP')}
         env['PYTHONDONTWRITEBYTECODE'] = '1'
+        env.update(temp_overrides)
         rows = []
         result['results'] = rows
         for label, command in commands:
