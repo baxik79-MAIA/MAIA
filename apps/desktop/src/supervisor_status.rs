@@ -5,6 +5,7 @@ use maia_supervisor_observation::{ProcessIdentity, ProcessObservation};
 use serde_json::Value;
 #[cfg(windows)]
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::{
     fs::File,
@@ -21,6 +22,8 @@ const MAX_STATE: u64 = 65_536;
 const MAX_RECORD: u64 = 16_384;
 const SECOND: i128 = 1_000_000_000;
 const MAX_HEARTBEAT_AGE: i128 = 60 * SECOND;
+pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const OBSERVATION_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Activity {
@@ -82,6 +85,9 @@ pub(crate) struct Projection {
     pub reported: ReportedFacts,
     pub reason: &'static str,
     pub sampled_at: String,
+    // Conservative original sample origin, before file/native queries. Channel
+    // delivery and UI receipt never renew this observation's lifetime.
+    monotonic_sample_started: Instant,
     pub last_confirmed_at: Option<String>,
     pub last_confirmed_process: Option<ProcessIdentity>,
     pub last_confirmed_activity: Option<Activity>,
@@ -101,6 +107,7 @@ impl Projection {
             reported: ReportedFacts::default(),
             reason,
             sampled_at: String::new(),
+            monotonic_sample_started: Instant::now(),
             last_confirmed_at: None,
             last_confirmed_process: None,
             last_confirmed_activity: None,
@@ -116,6 +123,22 @@ impl Projection {
     pub fn expire(&mut self) {
         self.activity = Activity::Unknown;
         self.reason = "OBSERVATION_STALE";
+    }
+
+    pub fn remaining_lifetime_at(&self, now: Instant) -> Duration {
+        OBSERVATION_TTL.saturating_sub(now.saturating_duration_since(self.monotonic_sample_started))
+    }
+
+    pub fn expire_at(&mut self, now: Instant) {
+        if self.remaining_lifetime_at(now).is_zero() {
+            self.expire();
+        }
+    }
+
+    pub fn for_display(mut self, now: Instant, previous: &Self) -> Self {
+        self.expire_at(now);
+        self.preserve_confirmation_from(previous);
+        self
     }
 
     pub fn preserve_confirmation_from(&mut self, previous: &Self) {
@@ -398,8 +421,10 @@ fn read_at(root: &Path) -> Projection {
 }
 
 pub(crate) fn read_default() -> Projection {
+    // Include filesystem/query time and time queued for the UI in the TTL.
+    let sample_started = Instant::now();
     #[cfg(not(windows))]
-    {
+    let mut out = {
         let mut out = project(
             ReportedFacts::default(),
             ProcessObservation::Unavailable,
@@ -407,11 +432,11 @@ pub(crate) fn read_default() -> Projection {
         );
         out.reason = "PLATFORM_OBSERVATION_UNAVAILABLE";
         out
-    }
+    };
     #[cfg(windows)]
-    {
-        read_at(Path::new(ROOT))
-    }
+    let mut out = read_at(Path::new(ROOT));
+    out.monotonic_sample_started = sample_started;
+    out
 }
 
 #[cfg(test)]
@@ -551,6 +576,71 @@ mod tests {
         let mut stale = old;
         stale.expire();
         assert_eq!(stale.activity, Activity::Unknown);
+    }
+    #[test]
+    fn queued_delivery_keeps_original_age_instead_of_renewing_ttl() {
+        let origin = Instant::now();
+        let f = facts();
+        let mut sampled = project(
+            f.clone(),
+            ProcessObservation::Alive(f.identity.unwrap()),
+            1_001 * SECOND,
+        );
+        sampled.monotonic_sample_started = origin;
+        let previous = Projection::unknown("NOT_OBSERVED");
+        let delivered = sampled.for_display(origin + Duration::from_secs(9), &previous);
+        assert_eq!(delivered.activity, Activity::ProcessObservedAlive);
+        assert_eq!(delivered.monotonic_sample_started, origin);
+        assert_eq!(
+            delivered.remaining_lifetime_at(origin + Duration::from_secs(9)),
+            Duration::from_secs(1),
+        );
+    }
+    #[test]
+    fn delayed_delivery_is_already_unknown_without_losing_confirmation() {
+        let origin = Instant::now();
+        let f = facts();
+        let mut sampled = project(
+            f.clone(),
+            ProcessObservation::Alive(f.identity.unwrap()),
+            1_001 * SECOND,
+        );
+        sampled.monotonic_sample_started = origin;
+        let confirmation = sampled.last_confirmed_at.clone();
+        let delivered = sampled.for_display(
+            origin + OBSERVATION_TTL + Duration::from_nanos(1),
+            &Projection::unknown("NOT_OBSERVED"),
+        );
+        assert_eq!(delivered.activity, Activity::Unknown);
+        assert_eq!(delivered.reason, "OBSERVATION_STALE");
+        assert_eq!(delivered.last_confirmed_at, confirmation);
+        assert_eq!(delivered.last_confirmed_process, f.identity);
+        assert_eq!(delivered.monotonic_sample_started, origin);
+    }
+    #[test]
+    fn near_ttl_repaint_budget_and_exact_expiry_use_original_sample() {
+        let origin = Instant::now();
+        let f = facts();
+        let mut sampled = project(
+            f.clone(),
+            ProcessObservation::Alive(f.identity.unwrap()),
+            1_001 * SECOND,
+        );
+        sampled.monotonic_sample_started = origin;
+        let near = origin + OBSERVATION_TTL - Duration::from_millis(1);
+        sampled.expire_at(near);
+        assert_eq!(sampled.activity, Activity::ProcessObservedAlive);
+        assert_eq!(
+            sampled.remaining_lifetime_at(near),
+            Duration::from_millis(1)
+        );
+        sampled.expire_at(origin + OBSERVATION_TTL);
+        assert_eq!(sampled.activity, Activity::Unknown);
+        assert_eq!(
+            sampled.remaining_lifetime_at(origin + OBSERVATION_TTL),
+            Duration::ZERO
+        );
+        assert_eq!(sampled.monotonic_sample_started, origin);
     }
     #[test]
     fn birth_ticks_are_lossless_and_untrusted_paths_are_not_ids() {

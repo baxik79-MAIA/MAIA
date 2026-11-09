@@ -194,7 +194,6 @@ struct MaiaDesktop {
     supervisor_projection: supervisor_status::Projection,
     supervisor_job: Option<std::sync::mpsc::Receiver<supervisor_status::Projection>>,
     last_supervisor_probe: Instant,
-    supervisor_sample_received: Instant,
 }
 
 impl Default for MaiaDesktop {
@@ -221,9 +220,8 @@ impl Default for MaiaDesktop {
             supervisor_projection: supervisor_status::Projection::unknown("NOT_OBSERVED"),
             supervisor_job: None,
             last_supervisor_probe: Instant::now()
-                .checked_sub(LOCAL_PROBE_INTERVAL)
+                .checked_sub(supervisor_status::REFRESH_INTERVAL)
                 .unwrap_or_else(Instant::now),
-            supervisor_sample_received: Instant::now(),
             workspace: DEFAULT_WORKSPACE.into(),
             database_path: std::env::var("MAIA_ALPHA1_DATABASE")
                 .unwrap_or_else(|_| r"C:\MAIA\data\maia-alpha1.db".into()),
@@ -890,10 +888,9 @@ impl eframe::App for MaiaDesktop {
         // the briefing packet/provider or the canonical Task/Run state machines.
         let supervisor_update = self.supervisor_job.as_ref().map(|job| job.try_recv());
         match supervisor_update {
-            Some(Ok(mut next)) => {
-                next.preserve_confirmation_from(&self.supervisor_projection);
-                self.supervisor_projection = next;
-                self.supervisor_sample_received = Instant::now();
+            Some(Ok(next)) => {
+                self.supervisor_projection =
+                    next.for_display(Instant::now(), &self.supervisor_projection);
                 self.supervisor_job = None;
             }
             Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
@@ -904,17 +901,16 @@ impl eframe::App for MaiaDesktop {
             }
             _ => {}
         }
-        if self.supervisor_sample_received.elapsed() > Duration::from_secs(10) {
-            self.supervisor_projection.expire();
-        }
         if self.supervisor_job.is_none()
-            && self.last_supervisor_probe.elapsed() >= LOCAL_PROBE_INTERVAL
+            && self.last_supervisor_probe.elapsed() >= supervisor_status::REFRESH_INTERVAL
         {
             self.last_supervisor_probe = Instant::now();
             let (send, receive) = std::sync::mpsc::channel();
             self.supervisor_job = Some(receive);
+            let repaint = ctx.clone();
             std::thread::spawn(move || {
                 let _ = send.send(supervisor_status::read_default());
+                repaint.request_repaint();
             });
         }
         // Bounded periodic re-probe of local-model availability (Architecture
@@ -962,6 +958,24 @@ impl eframe::App for MaiaDesktop {
                 let _ = send.send(available);
             });
         }
+        // Supervisor refresh and expiry have their own cadence. A queued
+        // sample keeps its original age; receipt never grants another ten seconds.
+        let supervisor_now = Instant::now();
+        self.supervisor_projection.expire_at(supervisor_now);
+        let mut supervisor_repaint = if self.supervisor_job.is_some() {
+            supervisor_status::REFRESH_INTERVAL
+        } else {
+            supervisor_status::REFRESH_INTERVAL.saturating_sub(
+                supervisor_now.saturating_duration_since(self.last_supervisor_probe),
+            )
+        };
+        if self.supervisor_projection.activity != supervisor_status::Activity::Unknown {
+            supervisor_repaint = supervisor_repaint.min(
+                self.supervisor_projection
+                    .remaining_lifetime_at(supervisor_now),
+            );
+        }
+        ctx.request_repaint_after(supervisor_repaint);
         // While a briefing is in flight the wait shows elapsed seconds, so the
         // UI needs to tick once a second; otherwise the 5s probe cadence is
         // enough to keep status live without busy-repainting an idle window.
