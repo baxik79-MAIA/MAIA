@@ -1555,6 +1555,7 @@ dependencies = [
  "maia-local-model",
  "maia-sqlite",
  "maia-store",
+ "maia-supervisor-observation",
  "serde_json",
  "sha2",
  "time",
@@ -1822,6 +1823,13 @@ dependencies = [
  "maia-domain",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "maia-supervisor-observation"
+version = "0.1.0"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

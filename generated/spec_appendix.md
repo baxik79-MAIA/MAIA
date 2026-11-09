@@ -4772,6 +4772,57 @@ pause_semantics:
   - created_to_starting
 ```
 
+## A.supervisor_status.yaml
+
+```yaml
+schema_version: 1
+supervisor_status:
+  purpose: read_only_desktop_telemetry_projection
+  authority: none
+  canonical_task_action_run_fsms_changed: false
+  read_only: true
+  external_network_calls: false
+  process_control: false
+  begin_enqueue_replay_cleanup_or_grants: false
+  reported_facts:
+    source: bounded_existing_supervisor_state_and_run_metadata
+    process_identity: exact_pid_and_lossless_birth_ticks
+    heartbeat: reported_controller_telemetry_for_same_run_only
+    worker_origin_heartbeat_proven: false
+    last_activity: reported_time_never_sample_time_or_file_mtime
+    log_paths: display_only_not_arbitrary_file_read_authority
+  native_observation:
+    scope: reported_executor_process_only
+    rights: [PROCESS_QUERY_LIMITED_INFORMATION, SYNCHRONIZE]
+    ownership: one_owned_query_handle_closed_on_all_paths
+    identity: same_handle_pid_and_creation_time
+    liveness: WaitForSingleObject_zero_timeout
+    exit_code_259_is_not_liveness: true
+    access_denied_or_query_failure: unknown
+    worker_binding_proven: false
+    executed_image_proven: false
+  projection:
+    controller_telemetry_max_age_seconds: 60
+    background_refresh_interval_seconds: 5
+    presentation_expiry_seconds: 10
+    thresholds_are_display_only_not_execution_authority: true
+    activity: [unknown, process_observed_alive, process_observed_exited]
+    missing_identity_or_heartbeat: unknown
+    stale_or_future_controller_telemetry: unknown
+    pid_birth_mismatch: unknown
+    failed_refresh: unknown_preserving_last_confirmed_observation_time
+    metadata_alone_can_be_active: false
+    semantic: [unconfirmed, reported_failure, reported_success]
+    is_error_true_overrides_exit_zero: true
+    positive_semantics_require: same_run_explicit_success_is_error_false_exit_zero
+    process_observation_is_not_semantic_success: true
+  unsupported_acceptance:
+    native_image_chain_proven: false
+    native_run_ready: false
+    apply_permitted: false
+    durability_proven: false
+```
+
 ## A.sync.yaml
 
 ```yaml

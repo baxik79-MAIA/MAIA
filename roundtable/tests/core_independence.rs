@@ -104,6 +104,10 @@ const APPS: &[(&str, &str)] = &[
 const OTHER: &[(&str, &str)] = &[
     ("maia-roundtable", include_str!("../Cargo.toml")),
     (
+        "maia-supervisor-observation",
+        include_str!("../../infra/supervisor-observation/Cargo.toml"),
+    ),
+    (
         "maia-anthropic",
         include_str!("../../infra/anthropic/Cargo.toml"),
     ),

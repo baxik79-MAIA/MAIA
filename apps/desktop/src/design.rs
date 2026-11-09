@@ -1,4 +1,4 @@
-//! MAIA visual primitives and product views. All content comes from the existing store.
+//! MAIA views: persisted briefing content and separate local read-only Supervisor telemetry.
 use super::*;
 use egui::{Align, FontId, Layout, Sense, Stroke, pos2, vec2};
 
@@ -269,6 +269,76 @@ fn date(value: &str) -> String {
 }
 
 impl MaiaDesktop {
+    fn supervisor_status(&self, ui: &mut egui::Ui, p: Palette) {
+        use supervisor_status::{Activity, Semantic};
+        let projection = &self.supervisor_projection;
+        let activity = match projection.activity {
+            Activity::Unknown => self.tr("Niepotwierdzony", "Unconfirmed"),
+            Activity::ProcessObservedAlive => self.tr(
+                "Zaobserwowano zgłoszony proces",
+                "Reported process observed alive",
+            ),
+            Activity::ProcessObservedExited => self.tr(
+                "Zgłoszony proces zakończony",
+                "Reported process observed exited",
+            ),
+        };
+        ui.horizontal_wrapped(|ui| {
+            meta(
+                ui,
+                p,
+                self.tr(
+                    "Supervisor · odczyt lokalny",
+                    "Supervisor · local observation",
+                ),
+            );
+            chip(ui, p, activity, false);
+        });
+        egui::CollapsingHeader::new(self.tr("Szczegóły obserwacji", "Observation details")).show(ui, |ui| {
+            let facts = &projection.reported;
+            meta(ui, p, format!("{}: {}", self.tr("Zgłoszona faza", "Reported phase"), facts.phase));
+            if let Some(run) = &facts.run_id { meta(ui, p, format!("Run: {run}")); }
+            if let Some(pid) = facts.pid { meta(ui, p, format!("PID: {pid}")); }
+            meta(ui, p, format!("{}: {}", self.tr("Zgłoszony rodzaj procesu", "Reported process kind"), facts.worker_kind.as_deref().unwrap_or(self.tr("niepotwierdzony", "unconfirmed"))));
+            if let Some(at) = &facts.heartbeat_at {
+                meta(ui, p, format!("{}: {at}", self.tr("Zgłoszona telemetria kontrolera", "Reported controller telemetry")));
+            }
+            meta(ui, p, facts.heartbeat_source);
+            if let Some(at) = &facts.log_changed_at {
+                meta(ui, p, format!("{}: {at}", self.tr("Zgłoszona zmiana logu", "Reported log change")));
+            }
+            if let Some(bytes) = facts.log_bytes { meta(ui, p, format!("{}: {bytes} B", self.tr("Zgłoszony rozmiar logu", "Reported log size"))); }
+            let semantic = match projection.semantic {
+                Semantic::Unconfirmed => self.tr("Wynik semantyczny niepotwierdzony", "Semantic outcome unconfirmed"),
+                Semantic::ReportedFailure => self.tr("Zgłoszony wynik: błąd", "Reported outcome: failure"),
+                Semantic::ReportedSuccess => self.tr("Zgłoszony wynik: sukces", "Reported outcome: success"),
+            };
+            meta(ui, p, semantic);
+            if let Some(at) = &projection.last_confirmed_at {
+                meta(ui, p, format!("{}: {at}", self.tr("Ostatnia potwierdzona obserwacja procesu", "Last confirmed process observation")));
+            }
+            if let Some(identity) = projection.last_confirmed_process {
+                let prior = match projection.last_confirmed_activity {
+                    Some(Activity::ProcessObservedAlive) => self.tr("żył", "was alive"),
+                    Some(Activity::ProcessObservedExited) => self.tr("zakończył się", "had exited"),
+                    _ => self.tr("niepotwierdzony", "unconfirmed"),
+                };
+                meta(ui, p, format!("{}: PID {} · birth {} · {prior}", self.tr("Ostatnio obserwowany proces", "Last observed process"), identity.pid, identity.birth_ticks));
+            }
+            meta(ui, p, "C:/MAIA/orchestrator/state/state.json");
+            if !projection.sampled_at.is_empty() {
+                meta(ui, p, format!("{}: {}", self.tr("Czas próbki obserwacji", "Observation sample time"), projection.sampled_at));
+            }
+            meta(ui, p, format!("{}: {}", self.tr("Powód", "Reason"), projection.reason));
+            meta(ui, p, self.tr("Obserwacja procesu jest oddzielna od dowodu wykonawcy i obrazu wykonania.", "Process observation is separate from worker binding and executed-image proof."));
+            meta(ui, p, format!("worker_binding={} · executed_image={} · image_chain={} · native_ready={} · apply={} · durability={}",
+                projection.worker_binding_proven, projection.executed_image_proven,
+                projection.native_image_chain_proven, projection.native_run_ready,
+                projection.apply_permitted, projection.durability_proven));
+        });
+        ui.add_space(8.0);
+    }
+
     pub(super) fn tr<'a>(&self, pl: &'a str, en: &'a str) -> &'a str {
         if self.language == "pl" { pl } else { en }
     }
@@ -638,6 +708,7 @@ impl MaiaDesktop {
             });
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(p.canvas).inner_margin(egui::Margin::symmetric(32,26))).show(ctx,|ui| {
             self.command(ui,p);
+            self.supervisor_status(ui,p);
             // An honest wait, not an opaque spinner: on CPU-only hardware a
             // real briefing measured 52.8s warm / 73.8s cold, so the elapsed
             // seconds are shown rather than leaving the user guessing whether
