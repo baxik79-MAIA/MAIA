@@ -468,15 +468,13 @@ impl MaiaDesktop {
                 entry.related_result_id = None;
                 continue;
             }
-            if let BriefingRequestState::Failed { .. } = &entry.state {
-                if entry.related_result_id.is_none() {
-                    if let Some(semantic) = briefings
-                        .iter()
-                        .find(|b| b.packet_hash == entry.packet_hash)
-                    {
-                        entry.related_result_id = Some(semantic.result_id.clone());
-                    }
-                }
+            if let BriefingRequestState::Failed { .. } = &entry.state
+                && entry.related_result_id.is_none()
+                && let Some(semantic) = briefings
+                    .iter()
+                    .find(|b| b.packet_hash == entry.packet_hash)
+            {
+                entry.related_result_id = Some(semantic.result_id.clone());
             }
         }
     }
@@ -920,11 +918,11 @@ impl eframe::App for MaiaDesktop {
         // `local_probe_job`, polled here with a non-blocking `try_recv()` —
         // the same channel/thread shape `briefing_job` already uses for the
         // (much longer) provider call.
-        if let Some(job) = &self.local_probe_job {
-            if let Ok(available) = job.try_recv() {
-                self.local_available = available;
-                self.local_probe_job = None;
-            }
+        if let Some(job) = &self.local_probe_job
+            && let Ok(available) = job.try_recv()
+        {
+            self.local_available = available;
+            self.local_probe_job = None;
         }
         if self.local_probe_job.is_none() && self.last_local_probe.elapsed() >= LOCAL_PROBE_INTERVAL
         {

@@ -47,10 +47,10 @@ fn config_from_args(args: &[String]) -> RecorderConfig {
     let mut config = RecorderConfig::default();
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        if arg == "--recorder-id" {
-            if let Some(value) = iter.next() {
-                config.recorder_id = value.clone();
-            }
+        if arg == "--recorder-id"
+            && let Some(value) = iter.next()
+        {
+            config.recorder_id = value.clone();
         }
     }
     config
@@ -83,12 +83,11 @@ fn cmd_run(args: &[String]) {
     let mut seconds = 60u64;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
-        if arg == "--seconds" {
-            if let Some(value) = iter.next() {
-                if let Ok(parsed) = value.parse::<u64>() {
-                    seconds = parsed;
-                }
-            }
+        if arg == "--seconds"
+            && let Some(value) = iter.next()
+            && let Ok(parsed) = value.parse::<u64>()
+        {
+            seconds = parsed;
         }
     }
     let config = config_from_args(args);

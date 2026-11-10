@@ -27,10 +27,10 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--hours" => {
-                if let Some(value) = args.next() {
-                    if let Ok(parsed) = value.parse::<u64>() {
-                        hours = parsed;
-                    }
+                if let Some(value) = args.next()
+                    && let Ok(parsed) = value.parse::<u64>()
+                {
+                    hours = parsed;
                 }
             }
             "--json" => json = true,

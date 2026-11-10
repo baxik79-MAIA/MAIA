@@ -39,7 +39,7 @@
 
 use maia_briefing::LocalProviderFailure;
 use maia_local_model::{LocalIntelligenceFailure, LocalIntelligenceStatus};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -238,12 +238,40 @@ pub struct HealthStore {
     retention: RetentionPolicy,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HealthSchema {
+    Empty,
+    Current,
+}
+
 impl HealthStore {
     /// Opens (creating if necessary) a health store at `path`. Creates the
     /// parent directory if it does not exist; a failure to do so is not
     /// itself fatal here (the subsequent `Connection::open` will fail with
     /// its own clear `StorageUnavailable` if the path is truly unusable).
     pub fn open(path: &Path, retention: RetentionPolicy) -> Result<Self, ObserverError> {
+        // This API accepts file paths, not SQLite file: URI query options:
+        // URI resolution must not select a different preflight target.
+        if path
+            .as_os_str()
+            .as_encoded_bytes()
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file:"))
+        {
+            return Err(ObserverError::StorageUnavailable);
+        }
+        // Inspect an existing container without a read-write open, WAL-mode
+        // change, schema DDL or metadata insert. Normal read-only SQLite WAL
+        // coordination may still use/create sidecar files; this is not a
+        // whole-directory no-write or hostile replacement-race guarantee.
+        if path
+            .try_exists()
+            .map_err(|_| ObserverError::StorageUnavailable)?
+        {
+            let existing = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                .map_err(|_| ObserverError::StorageUnavailable)?;
+            Self::inspect_schema(&existing)?;
+        }
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -259,12 +287,152 @@ impl HealthStore {
         Self::from_connection(conn, retention)
     }
 
+    fn inspect_schema(conn: &Connection) -> Result<HealthSchema, ObserverError> {
+        let mut statement = conn
+            .prepare("SELECT name,type FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' LIMIT 6")
+            .map_err(|_| ObserverError::StorageUnavailable)?;
+        let objects = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|_| ObserverError::StorageUnavailable)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|_| ObserverError::StorageUnavailable)?;
+        if objects.is_empty() {
+            Self::check_schema_integrity(conn)?;
+            return Ok(HealthSchema::Empty);
+        }
+
+        // Version1 has exactly one metadata row. A different table shape,
+        // duplicate version, other key or non-text value is not a migration.
+        let mut statement = conn
+            .prepare("SELECT key,value FROM schema_meta LIMIT 2")
+            .map_err(|_| ObserverError::SchemaVersionMismatch)?;
+        let metadata = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|_| ObserverError::SchemaVersionMismatch)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|_| ObserverError::SchemaVersionMismatch)?;
+        if metadata != [("version".to_owned(), SCHEMA_VERSION.to_string())] {
+            return Err(ObserverError::SchemaVersionMismatch);
+        }
+        // Tables/indexes and triggers have different SQLite name namespaces.
+        // Do not let a duplicate catalog name disappear when building the map.
+        if objects.len() != 5 {
+            return Err(ObserverError::SchemaVersionMismatch);
+        }
+        let objects = objects.into_iter().collect::<BTreeMap<_, _>>();
+        let expected = [
+            ("schema_meta", "table"),
+            ("status_samples", "table"),
+            ("inference_outcomes", "table"),
+            ("idx_status_samples_time", "index"),
+            ("idx_inference_outcomes_time", "index"),
+        ]
+        .into_iter()
+        .map(|(name, kind)| (name.to_owned(), kind.to_owned()))
+        .collect::<BTreeMap<_, _>>();
+        if objects != expected {
+            return Err(ObserverError::SchemaVersionMismatch);
+        }
+        let tables = [
+            (
+                "schema_meta",
+                vec![("key", "TEXT", 0, 1), ("value", "TEXT", 1, 0)],
+            ),
+            (
+                "status_samples",
+                vec![
+                    ("id", "INTEGER", 0, 1),
+                    ("recorded_at_ms", "INTEGER", 1, 0),
+                    ("model", "TEXT", 1, 0),
+                    ("available", "INTEGER", 1, 0),
+                    ("probe_duration_ms", "INTEGER", 0, 0),
+                ],
+            ),
+            (
+                "inference_outcomes",
+                vec![
+                    ("id", "INTEGER", 0, 1),
+                    ("recorded_at_ms", "INTEGER", 1, 0),
+                    ("model", "TEXT", 1, 0),
+                    ("operation", "TEXT", 1, 0),
+                    ("outcome", "TEXT", 1, 0),
+                    ("duration_ms", "INTEGER", 0, 0),
+                ],
+            ),
+        ];
+        for (table, columns) in tables {
+            let mut statement = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .map_err(|_| ObserverError::SchemaVersionMismatch)?;
+            let actual = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(5)?,
+                    ))
+                })
+                .map_err(|_| ObserverError::SchemaVersionMismatch)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|_| ObserverError::SchemaVersionMismatch)?;
+            if actual.len() != columns.len()
+                || actual.iter().zip(columns).any(
+                    |(
+                        (name, kind, not_null, pk),
+                        (expected_name, expected_kind, expected_not_null, expected_pk),
+                    )| {
+                        name != expected_name
+                            || !kind.eq_ignore_ascii_case(expected_kind)
+                            || *not_null != expected_not_null
+                            || *pk != expected_pk
+                    },
+                )
+            {
+                return Err(ObserverError::SchemaVersionMismatch);
+            }
+        }
+        for index in ["idx_status_samples_time", "idx_inference_outcomes_time"] {
+            let mut statement = conn
+                .prepare(&format!("PRAGMA index_info({index})"))
+                .map_err(|_| ObserverError::SchemaVersionMismatch)?;
+            let columns = statement
+                .query_map([], |row| row.get::<_, String>(2))
+                .map_err(|_| ObserverError::SchemaVersionMismatch)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(|_| ObserverError::SchemaVersionMismatch)?;
+            if columns != ["recorded_at_ms"] {
+                return Err(ObserverError::SchemaVersionMismatch);
+            }
+        }
+        Self::check_schema_integrity(conn)?;
+        Ok(HealthSchema::Current)
+    }
+
+    fn check_schema_integrity(conn: &Connection) -> Result<(), ObserverError> {
+        let result: String = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .map_err(|_| ObserverError::StorageUnavailable)?;
+        if result == "ok" {
+            Ok(())
+        } else {
+            Err(ObserverError::StorageUnavailable)
+        }
+    }
+
     fn from_connection(
         conn: Connection,
         retention: RetentionPolicy,
     ) -> Result<Self, ObserverError> {
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
+        // Recheck the selected connection before any mutating pragma/DDL.
+        // Existing valid version1 files are not silently repaired or rewritten.
+        if Self::inspect_schema(&conn)? == HealthSchema::Empty {
+            conn.execute_batch(
+                "PRAGMA journal_mode=WAL;
              CREATE TABLE IF NOT EXISTS schema_meta (
                  key TEXT PRIMARY KEY,
                  value TEXT NOT NULL
@@ -288,13 +456,17 @@ impl HealthStore {
              );
              CREATE INDEX IF NOT EXISTS idx_inference_outcomes_time
                  ON inference_outcomes(recorded_at_ms);",
-        )
-        .map_err(|_| ObserverError::StorageUnavailable)?;
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('version', ?1)",
-            params![SCHEMA_VERSION.to_string()],
-        )
-        .map_err(|_| ObserverError::StorageUnavailable)?;
+            )
+            .map_err(|_| ObserverError::StorageUnavailable)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('version', ?1)",
+                params![SCHEMA_VERSION.to_string()],
+            )
+            .map_err(|_| ObserverError::StorageUnavailable)?;
+        } else {
+            conn.pragma_update(None, "journal_mode", "WAL")
+                .map_err(|_| ObserverError::StorageUnavailable)?;
+        }
         let stored: String = conn
             .query_row(
                 "SELECT value FROM schema_meta WHERE key = 'version'",

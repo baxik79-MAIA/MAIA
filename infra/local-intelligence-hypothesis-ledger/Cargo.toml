@@ -2,7 +2,7 @@
 name = "maia-local-intelligence-hypothesis-ledger"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89.0"
 
 [[bin]]
 name = "local-intelligence-ledger"
@@ -10,7 +10,7 @@ path = "src/bin/ledger_cli.rs"
 
 [dependencies]
 maia-local-intelligence-diagnostics = { path = "../local-intelligence-diagnostics" }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Used only by the `local-intelligence-ledger` CLI binary (to build a fresh

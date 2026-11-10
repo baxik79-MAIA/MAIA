@@ -87,10 +87,10 @@ fn cmd_record(args: &[String]) {
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--hours" => {
-                if let Some(value) = iter.next() {
-                    if let Ok(parsed) = value.parse::<u64>() {
-                        hours = parsed;
-                    }
+                if let Some(value) = iter.next()
+                    && let Ok(parsed) = value.parse::<u64>()
+                {
+                    hours = parsed;
                 }
             }
             "--id" => id = iter.next().cloned(),
@@ -171,12 +171,11 @@ fn cmd_pattern(args: &[String]) {
     let mut n = 3usize;
     let mut iter = args[1..].iter();
     while let Some(arg) = iter.next() {
-        if arg == "--n" {
-            if let Some(value) = iter.next() {
-                if let Ok(parsed) = value.parse::<usize>() {
-                    n = parsed;
-                }
-            }
+        if arg == "--n"
+            && let Some(value) = iter.next()
+            && let Ok(parsed) = value.parse::<usize>()
+        {
+            n = parsed;
         }
     }
     let ledger = open_ledger();

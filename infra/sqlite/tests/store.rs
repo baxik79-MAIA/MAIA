@@ -575,3 +575,492 @@ fn crash_after_commit_preserves_data_and_audit() {
     drop(store);
     let _ = std::fs::remove_file(path);
 }
+
+// Isolated source fixtures for migration admission/backup. Failed assertions
+// retain their owned directory for diagnosis; successful cases close then clean.
+struct MigrationFixture {
+    root: std::path::PathBuf,
+    path: std::path::PathBuf,
+}
+impl MigrationFixture {
+    fn new(label: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "maia-migration-{label}-{}-{}-{}",
+            std::process::id(),
+            uuid_suffix(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("workspace.source with spaces.sqlite3");
+        Self { root, path }
+    }
+    fn backup(&self, from: usize) -> std::path::PathBuf {
+        let mut name = self.path.as_os_str().to_os_string();
+        name.push(format!(".pre-migration-v{from}-to-v4.bak"));
+        name.into()
+    }
+    fn image(&self) -> (Vec<u8>, Option<Vec<u8>>) {
+        let wal = std::fs::read(format!("{}-wal", self.path.display()))
+            .ok()
+            .filter(|bytes| !bytes.is_empty());
+        (std::fs::read(&self.path).unwrap(), wal)
+    }
+    fn assert_no_backup(&self) {
+        for from in 1..=5 {
+            assert!(!self.backup(from).exists(), "unexpected migration backup");
+        }
+    }
+    fn legacy(&self, version: usize) {
+        use sha2::{Digest, Sha256};
+        let migrations = [
+            (
+                "0001_initial",
+                include_str!("../migrations/0001_initial.sql"),
+            ),
+            (
+                "0002_briefing",
+                include_str!("../migrations/0002_briefing.sql"),
+            ),
+            (
+                "0003_artifacts",
+                include_str!("../migrations/0003_artifacts.sql"),
+            ),
+            (
+                "0004_briefing_packet",
+                include_str!("../migrations/0004_briefing_packet.sql"),
+            ),
+        ];
+        let connection = rusqlite::Connection::open(&self.path).unwrap();
+        for (id, sql) in migrations.iter().take(version) {
+            connection.execute_batch(sql).unwrap();
+            let digest = Sha256::digest(sql.as_bytes());
+            let checksum: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+            connection.execute(
+                "INSERT INTO migration_ledger(migration_id,checksum,applied_at) VALUES(?1,?2,?3)",
+                rusqlite::params![id, checksum, NOW],
+            ).unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO schema_meta(schema_version) VALUES(?1)",
+                [version as i64],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO workspaces(workspace_id,created_at) VALUES(?1,?2)",
+                [WS, NOW],
+            )
+            .unwrap();
+        connection.execute(
+            "INSERT INTO agent_tasks(id,version,workspace_id,request_text,origin_surface,state,privacy_class,requested_by,created_at) VALUES(?1,'1',?2,'persisted task','test',?3,?4,'actor',?5)",
+            rusqlite::params![TASK, WS, AgentTaskState::Queued.as_str(), PrivacyClass::LocalOnly.as_str(), NOW],
+        ).unwrap();
+    }
+    fn current(&self) {
+        let store = SqliteStore::open(&self.path, id(WS), now()).unwrap();
+        store.insert_task(&task(AgentTaskState::Queued)).unwrap();
+        store.append_audit(&event(71, "migration-fixture")).unwrap();
+    }
+    fn assert_migration_refused_unchanged(&self) {
+        let before = self.image();
+        assert!(matches!(
+            SqliteStore::open(&self.path, id(WS), now()),
+            Err(StoreError::MigrationError)
+        ));
+        assert_eq!(
+            self.image(),
+            before,
+            "refusal changed database/committed WAL"
+        );
+        self.assert_no_backup();
+    }
+}
+impl Drop for MigrationFixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            eprintln!("Retained migration fixture: {}", self.root.display());
+        } else {
+            std::fs::remove_dir_all(&self.root).expect("migration fixture handles must be closed");
+        }
+    }
+}
+
+#[test]
+fn fresh_and_existing_empty_database_need_no_migration_backup() {
+    for existing_empty_file in [false, true] {
+        let fixture = MigrationFixture::new("fresh");
+        if existing_empty_file {
+            std::fs::write(&fixture.path, b"").unwrap();
+        }
+        let store = SqliteStore::open(&fixture.path, id(WS), now()).unwrap();
+        assert!(store.is_writable_authority());
+        store.integrity_check().unwrap();
+        fixture.assert_no_backup();
+        drop(store);
+    }
+}
+
+#[test]
+fn current_schema_reopen_does_not_rewrite_metadata_or_make_backup() {
+    let fixture = MigrationFixture::new("current");
+    fixture.current();
+    let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+    // These are independent sentinels: any metadata write must abort startup.
+    connection.execute_batch(
+        "CREATE TRIGGER reject_schema_insert BEFORE INSERT ON schema_meta BEGIN SELECT RAISE(ABORT,'schema metadata rewritten'); END;
+         CREATE TRIGGER reject_schema_delete BEFORE DELETE ON schema_meta BEGIN SELECT RAISE(ABORT,'schema metadata rewritten'); END;
+         CREATE TRIGGER reject_ledger_insert BEFORE INSERT ON migration_ledger BEGIN SELECT RAISE(ABORT,'ledger rewritten'); END;
+         CREATE TRIGGER reject_ledger_update BEFORE UPDATE ON migration_ledger BEGIN SELECT RAISE(ABORT,'ledger rewritten'); END;
+         CREATE TRIGGER reject_ledger_delete BEFORE DELETE ON migration_ledger BEGIN SELECT RAISE(ABORT,'ledger rewritten'); END;"
+    ).unwrap();
+    drop(connection);
+    let store = SqliteStore::open(&fixture.path, id(WS), now()).unwrap();
+    assert_eq!(
+        store.get_task(&id(TASK)).unwrap(),
+        task(AgentTaskState::Queued)
+    );
+    store.verify_audit_chain(&id(WS)).unwrap();
+    fixture.assert_no_backup();
+}
+
+#[test]
+fn newer_schema_is_refused_without_rewriting_data_or_marker() {
+    let fixture = MigrationFixture::new("future");
+    fixture.current();
+    let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+    connection
+        .execute("UPDATE schema_meta SET schema_version=5", [])
+        .unwrap();
+    drop(connection);
+    fixture.assert_migration_refused_unchanged();
+}
+
+#[test]
+fn newer_schema_in_live_wal_is_refused_without_ignoring_or_changing_it() {
+    let fixture = MigrationFixture::new("future-wal");
+    fixture.current();
+    let writer = rusqlite::Connection::open(&fixture.path).unwrap();
+    writer.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    writer
+        .execute("UPDATE schema_meta SET schema_version=5", [])
+        .unwrap();
+    assert!(
+        fixture.image().1.is_some(),
+        "fixture must retain actual committed WAL"
+    );
+    fixture.assert_migration_refused_unchanged();
+    drop(writer);
+}
+
+#[test]
+fn unknown_ledger_entry_is_refused_by_readwrite_and_readonly() {
+    let fixture = MigrationFixture::new("unknown-ledger");
+    fixture.current();
+    let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO migration_ledger VALUES('9999_unknown','unknown',?1)",
+            [NOW],
+        )
+        .unwrap();
+    drop(connection);
+    fixture.assert_migration_refused_unchanged();
+    let before = fixture.image();
+    assert!(matches!(
+        SqliteStore::open_read_only(&fixture.path, id(WS), now()),
+        Err(StoreError::MigrationError)
+    ));
+    assert_eq!(fixture.image(), before);
+}
+
+#[test]
+fn inconsistent_markers_and_nonprefix_ledger_are_refused_unchanged() {
+    for sql in [
+        "INSERT INTO schema_meta(schema_version) VALUES(4)",
+        "DELETE FROM schema_meta",
+        "UPDATE schema_meta SET schema_version=0",
+        "UPDATE schema_meta SET schema_version='not-an-integer'",
+        "UPDATE schema_meta SET schema_version=3; DELETE FROM migration_ledger WHERE migration_id='0002_briefing'",
+        "DROP TABLE migration_ledger",
+        "UPDATE migration_ledger SET checksum='bad' WHERE migration_id='0001_initial'",
+        "UPDATE migration_ledger SET applied_at='not-a-timestamp' WHERE migration_id='0001_initial'",
+    ] {
+        let fixture = MigrationFixture::new("bad-metadata");
+        fixture.current();
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        connection.execute_batch(sql).unwrap();
+        drop(connection);
+        fixture.assert_migration_refused_unchanged();
+    }
+}
+
+#[test]
+fn unrelated_or_corrupt_database_is_not_initialized_as_maia() {
+    for table in ["other_application", "sqliteX"] {
+        let unrelated = MigrationFixture::new("unrelated");
+        let connection = rusqlite::Connection::open(&unrelated.path).unwrap();
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE {table}(value TEXT); INSERT INTO {table} VALUES('preserve me')"
+            ))
+            .unwrap();
+        drop(connection);
+        unrelated.assert_migration_refused_unchanged();
+    }
+    let corrupt = MigrationFixture::new("corrupt");
+    std::fs::write(
+        &corrupt.path,
+        b"not a SQLite database; preserve these bytes",
+    )
+    .unwrap();
+    let before = corrupt.image();
+    assert!(matches!(
+        SqliteStore::open(&corrupt.path, id(WS), now()),
+        Err(StoreError::Corruption | StoreError::PersistenceError)
+    ));
+    assert_eq!(corrupt.image(), before);
+    corrupt.assert_no_backup();
+}
+
+#[test]
+fn every_supported_legacy_schema_is_backed_up_before_upgrade_and_restores() {
+    for version in 1..=3 {
+        let fixture = MigrationFixture::new("legacy");
+        fixture.legacy(version);
+        let store = SqliteStore::open(&fixture.path, id(WS), now()).unwrap();
+        assert_eq!(
+            store.get_task(&id(TASK)).unwrap(),
+            task(AgentTaskState::Queued)
+        );
+        store.integrity_check().unwrap();
+        drop(store);
+        let backup_path = fixture.backup(version);
+        let backup = rusqlite::Connection::open_with_flags(
+            &backup_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let saved_version: i64 = backup
+            .query_row("SELECT schema_version FROM schema_meta", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(saved_version, version as i64);
+        let count: i64 = backup
+            .query_row("SELECT COUNT(*) FROM migration_ledger", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, version as i64);
+        let saved_text: String = backup
+            .query_row(
+                "SELECT request_text FROM agent_tasks WHERE id=?1",
+                [TASK],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(saved_text, "persisted task");
+        let integrity: String = backup
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        drop(backup);
+        // Inspect the old version before reopening it through the new adapter.
+        let restored_path = fixture.root.join("restored legacy.sqlite3");
+        SqliteStore::restore_offline(&backup_path, &restored_path).unwrap();
+        let restored = rusqlite::Connection::open_with_flags(
+            &restored_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        assert_eq!(
+            restored
+                .query_row("SELECT schema_version FROM schema_meta", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            version as i64
+        );
+        assert_eq!(
+            restored
+                .query_row(
+                    "SELECT request_text FROM agent_tasks WHERE id=?1",
+                    [TASK],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "persisted task"
+        );
+        drop(restored);
+        let reopened = SqliteStore::open(&restored_path, id(WS), now()).unwrap();
+        assert_eq!(
+            reopened.get_task(&id(TASK)).unwrap(),
+            task(AgentTaskState::Queued)
+        );
+        reopened.integrity_check().unwrap();
+        drop(reopened);
+        let current = SqliteStore::open_read_only(&fixture.path, id(WS), now()).unwrap();
+        current.verify_audit_chain(&id(WS)).unwrap();
+    }
+}
+
+#[test]
+fn existing_backup_is_never_overwritten_and_blocks_migration() {
+    let fixture = MigrationFixture::new("backup-collision");
+    fixture.legacy(3);
+    let backup_path = fixture.backup(3);
+    std::fs::write(&backup_path, b"previous backup must survive").unwrap();
+    let before = fixture.image();
+    assert!(matches!(
+        SqliteStore::open(&fixture.path, id(WS), now()),
+        Err(StoreError::PersistenceError)
+    ));
+    assert_eq!(fixture.image(), before);
+    assert_eq!(
+        std::fs::read(backup_path).unwrap(),
+        b"previous backup must survive"
+    );
+}
+
+#[test]
+fn backup_destination_failure_leaves_legacy_schema_and_rows_untouched() {
+    let fixture = MigrationFixture::new("backup-failure");
+    fixture.legacy(2);
+    let backup_path = fixture.backup(2);
+    std::fs::create_dir(&backup_path).unwrap();
+    let before = fixture.image();
+    assert!(matches!(
+        SqliteStore::open(&fixture.path, id(WS), now()),
+        Err(StoreError::PersistenceError)
+    ));
+    assert_eq!(fixture.image(), before);
+    assert!(backup_path.is_dir());
+    let connection = rusqlite::Connection::open_with_flags(
+        &fixture.path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT schema_version FROM schema_meta", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT request_text FROM agent_tasks WHERE id=?1",
+                [TASK],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        "persisted task"
+    );
+}
+
+#[test]
+fn sqlite_file_uri_is_refused_before_filesystem_or_database_target_resolution() {
+    let fixture = MigrationFixture::new("file-uri");
+    fixture.current();
+    let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+    connection
+        .execute("UPDATE schema_meta SET schema_version=5", [])
+        .unwrap();
+    drop(connection);
+    let before = fixture.image();
+    let uri = std::path::PathBuf::from(format!(
+        "file:{}?mode=rw",
+        fixture.path.to_string_lossy().replace('\\', "/")
+    ));
+    assert!(matches!(
+        SqliteStore::open(&uri, id(WS), now()),
+        Err(StoreError::PersistenceError)
+    ));
+    assert_eq!(fixture.image(), before);
+    fixture.assert_no_backup();
+}
+
+#[test]
+fn missing_or_mismatched_known_structure_is_refused_before_repair_or_backup() {
+    for (version, sql) in [
+        (1, "DROP TABLE freshness_evidence"),
+        (4, "DROP TABLE freshness_evidence"),
+        (2, "DROP TABLE briefing_citations"),
+        (1, "ALTER TABLE freshness_evidence DROP COLUMN result"),
+        (4, "ALTER TABLE briefing_results DROP COLUMN packet_json"),
+        (
+            3,
+            "ALTER TABLE briefing_results ADD COLUMN packet_json TEXT NOT NULL DEFAULT '{}'",
+        ),
+        (1, "CREATE TABLE artifacts(unrelated TEXT)"),
+    ] {
+        let fixture = MigrationFixture::new("known-structure");
+        fixture.legacy(version);
+        let connection = rusqlite::Connection::open(&fixture.path).unwrap();
+        connection.execute_batch(sql).unwrap();
+        drop(connection);
+        fixture.assert_migration_refused_unchanged();
+    }
+}
+
+#[test]
+fn legacy_backup_includes_committed_wal_before_migration_ddl() {
+    let fixture = MigrationFixture::new("legacy-wal-backup");
+    fixture.legacy(2);
+    let writer = rusqlite::Connection::open(&fixture.path).unwrap();
+    writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+    writer.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    let main_before_update = std::fs::read(&fixture.path).unwrap();
+    writer
+        .execute(
+            "UPDATE agent_tasks SET request_text='committed legacy WAL payload' WHERE id=?1",
+            [TASK],
+        )
+        .unwrap();
+    assert_eq!(std::fs::read(&fixture.path).unwrap(), main_before_update);
+    assert!(
+        fixture.image().1.is_some(),
+        "legacy data must actually reside in committed WAL"
+    );
+
+    // Keep that connection alive: the new migration path must copy its
+    // committed WAL through the separate RO backup while holding IMMEDIATE.
+    let store = SqliteStore::open(&fixture.path, id(WS), now()).unwrap();
+    assert_eq!(
+        store.get_task(&id(TASK)).unwrap().request_text().as_str(),
+        "committed legacy WAL payload"
+    );
+    let backup = rusqlite::Connection::open_with_flags(
+        fixture.backup(2),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        backup
+            .query_row("SELECT schema_version FROM schema_meta", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        backup
+            .query_row(
+                "SELECT request_text FROM agent_tasks WHERE id=?1",
+                [TASK],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        "committed legacy WAL payload"
+    );
+    assert_eq!(
+        backup
+            .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+            .unwrap(),
+        "ok"
+    );
+    drop(backup);
+    drop(store);
+    drop(writer);
+}

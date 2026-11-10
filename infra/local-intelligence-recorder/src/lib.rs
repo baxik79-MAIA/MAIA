@@ -741,17 +741,22 @@ mod tests {
         assert_eq!(ledger.latest_n(10).unwrap().len(), 1);
     }
 
-    // L. idle recorder does not busy-loop. Proven behaviorally: during an
-    // idle period before its first cadence boundary, nothing is recorded,
-    // and stop() still returns promptly (a busy-looping or blocked-until-
-    // cadence implementation would not respond quickly to a Condvar
-    // notify).
+    // L. no work during an idle wait, and stop wakes that wait promptly.
+    // Slots are aligned to UNIX_EPOCH, so an ordinary ten-second cadence
+    // can reach its first boundary less than 50ms after start. Put the
+    // first aligned boundary a day ahead instead of assuming a full
+    // cadence interval always follows start. This still catches an
+    // immediate recording cycle and a stop blocked on the idle wait.
     #[test]
     fn idle_recorder_does_not_record_early_and_stops_promptly() {
         let health = Arc::new(health_store());
         let ledger = Arc::new(ledger());
+        let cadence = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("test clock must be after Unix epoch")
+            + Duration::from_secs(24 * 60 * 60);
         let config = RecorderConfig {
-            cadence: Duration::from_secs(10),
+            cadence,
             ..RecorderConfig::default()
         };
         let recorder = Recorder::start(health, ledger.clone(), config);
@@ -766,7 +771,7 @@ mod tests {
         assert_eq!(outcome, StopOutcome::Stopped);
         assert!(
             started.elapsed() < Duration::from_secs(1),
-            "a Condvar-based wait must wake promptly on stop, not busy-loop or block for the full cadence"
+            "an idle Condvar wait must wake promptly on stop instead of blocking for the full cadence"
         );
     }
 
