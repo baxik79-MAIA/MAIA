@@ -1385,13 +1385,30 @@ mod tests {
 
     #[test]
     fn opening_a_store_at_an_unwritable_path_fails_closed_not_panics() {
-        // A path whose parent cannot possibly be created (a bare drive root
-        // under a name that does not exist) forces Connection::open to fail;
-        // this must surface as a typed error, never a panic.
-        let result = HealthStore::open(
-            Path::new("Z:\\definitely-not-a-real-drive\\health.sqlite3"),
-            RetentionPolicy::default(),
-        );
+        struct Fixture(std::path::PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let dir = std::env::temp_dir().join(format!(
+            "maia-health-parent-file-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&dir).expect("create owned fixture directory");
+        let fixture = Fixture(dir);
+        let parent = fixture.0.join("parent-file");
+        std::fs::write(&parent, b"ordinary file").expect("create parent-file fixture");
+
+        // An ordinary file cannot be a database's parent directory on any OS,
+        // regardless of the current user's filesystem permissions.
+        let path = parent.join("health.sqlite3");
+        let result = HealthStore::open(&path, RetentionPolicy::default());
         assert_eq!(result.err(), Some(ObserverError::StorageUnavailable));
     }
 
