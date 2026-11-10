@@ -12,6 +12,8 @@ struct Palette {
     text: Color32,
     muted: Color32,
     accent: Color32,
+    primary: Color32,
+    primary_hover: Color32,
     selected: Color32,
     green: Color32,
 }
@@ -20,16 +22,18 @@ impl Palette {
         let c = Color32::from_rgb;
         if dark {
             Self {
-                canvas: c(10, 18, 29),
-                rail: c(8, 15, 25),
-                surface: c(16, 28, 43),
-                raised: c(23, 36, 54),
-                border: c(36, 51, 74),
-                text: c(234, 239, 252),
-                muted: c(151, 168, 199),
-                accent: c(136, 145, 255),
-                selected: c(36, 43, 86),
-                green: c(74, 211, 188),
+                canvas: c(9, 15, 26),
+                rail: c(10, 16, 28),
+                surface: c(17, 29, 46),
+                raised: c(25, 39, 61),
+                border: c(44, 59, 82),
+                text: c(240, 244, 255),
+                muted: c(165, 180, 205),
+                accent: c(180, 186, 255),
+                primary: c(83, 72, 215),
+                primary_hover: c(97, 82, 232),
+                selected: c(40, 47, 89),
+                green: c(118, 229, 208),
             }
         } else {
             Self {
@@ -39,10 +43,12 @@ impl Palette {
                 raised: c(232, 237, 249),
                 border: c(204, 213, 233),
                 text: c(27, 38, 65),
-                muted: c(86, 104, 137),
+                muted: c(78, 96, 128),
                 accent: c(78, 68, 196),
+                primary: c(79, 65, 200),
+                primary_hover: c(91, 74, 218),
                 selected: c(216, 218, 251),
-                green: c(16, 123, 104),
+                green: c(13, 109, 92),
             }
         }
     }
@@ -158,6 +164,47 @@ fn mark(ui: &mut egui::Ui, size: f32) {
         );
     }
 }
+// Static brand artwork, deliberately independent of availability, activity and time.
+// At most 96 short line segments per visible motif; no animation or repaint timer.
+fn aurora(ui: &mut egui::Ui, p: Palette, size: egui::Vec2) {
+    let (r, _) = ui.allocate_exact_size(size, Sense::hover());
+    let painter = ui.painter();
+    let center = r.center();
+    let radius = size.y * 0.31;
+    for (offset, strength) in [(8., 0.08), (4., 0.17), (0., 0.36)] {
+        painter.circle_stroke(
+            center,
+            radius + offset,
+            Stroke::new(1.0_f32, p.accent.gamma_multiply(strength)),
+        );
+    }
+    for band in 0..3 {
+        let color = if band == 1 { p.green } else { p.accent };
+        let phase = band as f32 * 0.8;
+        let mut previous = None;
+        for step in 0..=32 {
+            let t = step as f32 / 32.;
+            let point = pos2(
+                r.left() + size.x * (0.08 + t * 0.84),
+                center.y + (t * std::f32::consts::TAU + phase).sin() * radius * 0.55,
+            );
+            if let Some(from) = previous {
+                painter.line_segment(
+                    [from, point],
+                    Stroke::new(1.5_f32, color.gamma_multiply(0.62)),
+                );
+            }
+            previous = Some(point);
+        }
+    }
+    paint_icon(
+        painter,
+        egui::Rect::from_center_size(center, vec2(26., 26.)),
+        4,
+        p.accent,
+    );
+}
+
 struct MaiaCard;
 impl MaiaCard {
     fn show<R>(
@@ -169,7 +216,7 @@ impl MaiaCard {
         egui::Frame::NONE
             .fill(p.surface)
             .stroke(Stroke::new(1.0_f32, p.border))
-            .corner_radius(12)
+            .corner_radius(16)
             .inner_margin(22)
             .show(ui, |ui| {
                 ui.set_min_width((ui.available_width()).max(0.));
@@ -225,11 +272,7 @@ fn button(ui: &mut egui::Ui, p: Palette, label: &str, primary: bool) -> egui::Re
         } else {
             p.accent
         }))
-        .fill(if primary {
-            Color32::from_rgb(79, 70, 218)
-        } else {
-            p.raised
-        })
+        .fill(if primary { p.primary } else { p.raised })
         .stroke(Stroke::new(
             1.0_f32,
             if primary {
@@ -238,30 +281,41 @@ fn button(ui: &mut egui::Ui, p: Palette, label: &str, primary: bool) -> egui::Re
                 p.border
             },
         ))
-        .corner_radius(8)
-        .min_size(vec2(0., 36.)),
+        .corner_radius(10)
+        .min_size(vec2(0., 40.)),
     )
 }
 fn meta(ui: &mut egui::Ui, p: Palette, text: impl Into<String>) {
     ui.label(RichText::new(text).size(13.).color(p.muted));
 }
-fn arrow_button(ui: &mut egui::Ui, p: Palette) -> egui::Response {
+fn arrow_button(ui: &mut egui::Ui, p: Palette, label: &str) -> egui::Response {
     let (r, response) = ui.allocate_exact_size(vec2(40., 36.), Sense::click());
     ui.painter().rect_filled(
         r,
         8,
         if response.hovered() || response.has_focus() {
-            p.accent
+            p.primary_hover
         } else {
-            Color32::from_rgb(79, 70, 218)
+            p.primary
         },
     );
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            egui::Rect::from_min_max(r.min - vec2(2., 2.), r.max + vec2(2., 2.)),
+            10,
+            Stroke::new(2.0_f32, p.accent),
+            egui::StrokeKind::Inside,
+        );
+    }
     paint_icon(
         ui.painter(),
         egui::Rect::from_center_size(r.center(), vec2(22., 22.)),
         5,
         Color32::WHITE,
     );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, response.enabled(), label)
+    });
     response
 }
 fn date(value: &str) -> String {
@@ -269,6 +323,50 @@ fn date(value: &str) -> String {
 }
 
 impl MaiaDesktop {
+    fn page_header(&self, ui: &mut egui::Ui, p: Palette) {
+        let wide = ui.available_width() >= 720.;
+        egui::Frame::NONE
+            .fill(p.surface)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .corner_radius(18)
+            .inner_margin(egui::Margin::symmetric(24, 16))
+            .show(ui, |ui| {
+                let text_width = (ui.available_width() - if wide { 142. } else { 0. }).max(0.);
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        vec2(text_width, 82.),
+                        Layout::top_down(Align::LEFT),
+                        |ui| {
+                            ui.horizontal_wrapped(|ui| {
+                                meta(ui, p, self.tr("TWÓJ OBSZAR PRACY", "YOUR WORKSPACE"));
+                                meta(ui, p, "·  MAIA");
+                            });
+                            ui.heading(
+                                RichText::new(self.text(
+                                    ["today", "workspaces", "history", "sources"][self.page],
+                                ))
+                                .size(if wide { 34. } else { 28. })
+                                .strong()
+                                .family(egui::FontFamily::Name("maia-semibold".into())),
+                            );
+                            meta(
+                                ui,
+                                p,
+                                self.tr(
+                                    "Twoje źródła. Jasny obraz. Kolejny krok.",
+                                    "Your sources. A clearer picture. What comes next.",
+                                ),
+                            );
+                        },
+                    );
+                    if wide {
+                        aurora(ui, p, vec2(126., 82.));
+                    }
+                });
+            });
+        ui.add_space(16.);
+    }
+
     fn supervisor_status(&self, ui: &mut egui::Ui, p: Palette) {
         use supervisor_status::{Activity, Semantic};
         let projection = &self.supervisor_projection;
@@ -283,6 +381,12 @@ impl MaiaDesktop {
                 "Reported process observed exited",
             ),
         };
+        egui::Frame::NONE
+            .fill(p.surface)
+            .stroke(Stroke::new(1.0_f32, p.border))
+            .corner_radius(12)
+            .inner_margin(12)
+            .show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             meta(
                 ui,
@@ -336,6 +440,7 @@ impl MaiaDesktop {
                 projection.native_image_chain_proven, projection.native_run_ready,
                 projection.apply_permitted, projection.durability_proven));
         });
+            });
         ui.add_space(8.0);
     }
 
@@ -527,7 +632,7 @@ impl MaiaDesktop {
         for w in [&mut v.widgets.inactive, &mut v.widgets.noninteractive] {
             w.bg_fill = p.surface;
             w.weak_bg_fill = p.surface;
-            w.bg_stroke = Stroke::new(1.0_f32, p.border);
+            w.bg_stroke = Stroke::new(1.0_f32, p.muted);
             w.fg_stroke = Stroke::new(1.0_f32, p.text);
             w.corner_radius = 8.into();
         }
@@ -582,6 +687,14 @@ impl MaiaDesktop {
                             if self.page == i { p.selected } else { p.raised },
                         );
                     }
+                    if response.has_focus() {
+                        ui.painter().rect_stroke(
+                            r,
+                            9,
+                            Stroke::new(2.0_f32, p.accent),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
                     if self.page == i {
                         ui.painter().rect_filled(
                             egui::Rect::from_min_size(r.min + vec2(0., 12.), vec2(3., 24.)),
@@ -602,6 +715,14 @@ impl MaiaDesktop {
                         FontId::proportional(15.),
                         if self.page == i { p.text } else { p.muted },
                     );
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::SelectableLabel,
+                            response.enabled(),
+                            self.page == i,
+                            label,
+                        )
+                    });
                     if response.clicked() {
                         self.navigate_to(i);
                         self.selected_citation = None;
@@ -707,7 +828,9 @@ impl MaiaDesktop {
                 self.context(ui, p);
             });
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(p.canvas).inner_margin(egui::Margin::symmetric(32,26))).show(ctx,|ui| {
+            self.page_header(ui,p);
             self.command(ui,p);
+            ui.add_space(12.);
             self.supervisor_status(ui,p);
             // An honest wait, not an opaque spinner: on CPU-only hardware a
             // real briefing measured 52.8s warm / 73.8s cold, so the elapsed
@@ -743,16 +866,15 @@ impl MaiaDesktop {
                 };
                 ui.horizontal_wrapped(|ui| {meta(ui,p,text);if button(ui,p,self.tr("Zamknij","Dismiss"),false).clicked(){self.feedback=None;self.current_failure_kind=None;}});
             }
-            ui.add_space(30.);
-            ui.horizontal(|ui| {ui.vertical(|ui| {ui.heading(RichText::new(self.text(["today","workspaces","history","sources"][self.page])).size(32.).strong().family(egui::FontFamily::Name("maia-semibold".into())));meta(ui,p,self.tr("Twoje źródła. Jasny obraz. Kolejny krok.","Your sources. A clearer picture. What comes next."));});});
-            ui.add_space(24.);
+            ui.add_space(18.);
             egui::ScrollArea::vertical().id_salt("maia_canvas").show(ui,|ui| {match self.page {0=>self.today(ui,p),1=>self.workspace_view(ui,p),2=>self.history_view(ui,p),_=>self.sources_view(ui,p)}});
         });
         if self.show_import {
             let mut open = true;
             egui::Window::new(self.tr("Dodaj lokalne źródło","Add a local source")).open(&mut open).collapsible(false).resizable(false).default_width(510.).show(ctx,|ui| {
                 ui.label(self.tr("Wybierz plik tekstowy .txt lub .md (do 256 KB).","Choose a .txt or .md text file (up to 256 KB)."));
-                ui.add(TextEdit::singleline(&mut self.evidence_path).desired_width(f32::INFINITY).hint_text(if self.language=="pl"{"Ścieżka do pliku"}else{"File path"}));
+                let path_label = ui.label(self.tr("Ścieżka do pliku", "File path"));
+                ui.add(TextEdit::singleline(&mut self.evidence_path).desired_width(f32::INFINITY).hint_text(if self.language=="pl"{"Ścieżka do pliku"}else{"File path"})).labelled_by(path_label.id);
                 if button(ui,p,self.text("import"),true).clicked(){self.import_evidence();if self.evidence_path.is_empty(){self.show_import=false;}}
                 if !self.evidence_path.is_empty(){meta(ui,p,self.tr("Plik musi istnieć, zawierać tekst UTF-8 i mieć format .txt lub .md.","The file must exist, contain UTF-8 text, and use .txt or .md format."));}
             });
@@ -769,14 +891,14 @@ impl MaiaDesktop {
         egui::Frame::NONE
             .fill(p.raised)
             .stroke(Stroke::new(1.0_f32, p.accent.gamma_multiply(0.65)))
-            .corner_radius(12)
+            .corner_radius(14)
             .inner_margin(egui::Margin::symmetric(18, 13))
             .show(ui, |ui| {
                 ui.add_enabled_ui(!processing, |ui| {
                     ui.horizontal(|ui| {
                         icon(ui, 4, p.accent, 28.);
                         ui.add_space(4.);
-                        ui.label(
+                        let prompt_label = ui.label(
                             RichText::new(self.tr("Zapytaj MAIA", "Ask MAIA"))
                                 .size(18.)
                                 .strong()
@@ -796,13 +918,15 @@ impl MaiaDesktop {
                         let arrow_width = 40.;
                         let gap = 8.;
                         let width = (ui.available_width() - arrow_width - gap).max(90.);
-                        let edit = ui.add_sized(
-                            vec2(width, 34.),
-                            TextEdit::singleline(&mut self.prompt)
-                                .frame(false)
-                                .font(FontId::proportional(15.))
-                                .hint_text(hint),
-                        );
+                        let edit = ui
+                            .add_sized(
+                                vec2(width, 34.),
+                                TextEdit::singleline(&mut self.prompt)
+                                    .frame(false)
+                                    .font(FontId::proportional(15.))
+                                    .hint_text(hint),
+                            )
+                            .labelled_by(prompt_label.id);
                         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
                             edit.request_focus();
                         }
@@ -816,12 +940,19 @@ impl MaiaDesktop {
                             crate::warm_local_model();
                         }
                         ui.add_space(gap);
-                        let send = arrow_button(ui, p)
-                            .on_hover_text(self.tr(
+                        let send = arrow_button(
+                            ui,
+                            p,
+                            self.tr(
                                 "Przygotuj briefing ze źródeł",
                                 "Prepare a briefing from sources",
-                            ))
-                            .clicked();
+                            ),
+                        )
+                        .on_hover_text(self.tr(
+                            "Przygotuj briefing ze źródeł",
+                            "Prepare a briefing from sources",
+                        ))
+                        .clicked();
                         if send
                             || (edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                         {
@@ -1136,7 +1267,13 @@ impl MaiaDesktop {
                             ui,
                             p,
                             format!(
-                                "Qwen · {} {}",
+                                "{}: {} · {} {}",
+                                self.tr("Zapisany model", "Recorded model"),
+                                b.actual_model
+                                    .as_deref()
+                                    .map(str::trim)
+                                    .filter(|model| !model.is_empty())
+                                    .unwrap_or(self.tr("niepotwierdzony", "unconfirmed")),
                                 b.packet.evidence.len(),
                                 self.tr("źródeł", "sources")
                             ),
@@ -1357,9 +1494,10 @@ impl MaiaDesktop {
     }
     fn context_empty(&self, ui: &mut egui::Ui, p: Palette) {
         MaiaCard::show(ui, p, 210., |ui| {
+            ui.add_space(4.);
+            let artwork_width = ui.available_width();
+            aurora(ui, p, vec2(artwork_width, 86.));
             ui.add_space(12.);
-            icon(ui, 4, p.accent, 36.);
-            ui.add_space(16.);
             ui.label(
                 RichText::new(self.tr("Miejsce na kontekst", "A place for context"))
                     .size(20.)

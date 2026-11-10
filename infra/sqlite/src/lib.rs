@@ -19,7 +19,8 @@ use maia_store::{
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, Row, Transaction, TransactionBehavior,
-    backup::Backup, params,
+    backup::{Backup, StepResult},
+    params,
 };
 use sha2::{Digest, Sha256};
 
@@ -40,6 +41,91 @@ const MIGRATIONS: &[(&str, &str)] = &[
     (
         "0004_briefing_packet",
         include_str!("../migrations/0004_briefing_packet.sql"),
+    ),
+];
+
+// Required known table/column surfaces for each canonical prefix. Extra audit
+// sentinels remain allowed, but missing core structure is never silently repaired.
+const REQUIRED_TABLES: &[(&str, usize, &str)] = &[
+    (
+        "schema_meta",
+        1,
+        "SELECT schema_version FROM schema_meta LIMIT 0",
+    ),
+    (
+        "migration_ledger",
+        1,
+        "SELECT migration_id,checksum,applied_at FROM migration_ledger LIMIT 0",
+    ),
+    (
+        "workspaces",
+        1,
+        "SELECT workspace_id,created_at FROM workspaces LIMIT 0",
+    ),
+    (
+        "agent_tasks",
+        1,
+        "SELECT id,version,workspace_id,request_text,origin_surface,origin_ref,state,privacy_class,requested_by,created_at FROM agent_tasks LIMIT 0",
+    ),
+    (
+        "execution_plans",
+        1,
+        "SELECT id,version,task_id,risk_summary,estimated_amount_micros,estimated_currency,approval_requirement,created_at FROM execution_plans LIMIT 0",
+    ),
+    (
+        "actions",
+        1,
+        "SELECT id,version,plan_id,plan_version,ordinal,action_type,connector_profile_id,risk_class,state,input_ref,source_preconditions_json,result_ref,input_hash,input_canonicalizer_id,input_canonicalizer_version,connector_selection,connector_binding_hash,tool_definition_fingerprint,action_hash FROM actions LIMIT 0",
+    ),
+    (
+        "approvals",
+        1,
+        "SELECT id,task_id,action_id,action_version,policy_id,state,requested_at,decided_at,decided_by,decision_note,action_hash,version,expires_at,origin_surface,decided_surface,policy_snapshot_hash,policy_decision,required_assurance,achieved_assurance FROM approvals LIMIT 0",
+    ),
+    (
+        "runs",
+        1,
+        "SELECT id,version,action_id,action_version,attempt,requested_connector_id,actual_connector_id,requested_model_id,actual_model_id,state,outcome_certainty,reconciliation_ref,started_at,ended_at,action_hash,approval_id,approval_version FROM runs LIMIT 0",
+    ),
+    (
+        "freshness_evidence",
+        1,
+        "SELECT run_id,action_id,action_version,action_hash,enforcement,precondition_external_id,precondition_source_version_token,precondition_payload_hash,observed_source_version_token,observed_payload_hash,result FROM freshness_evidence LIMIT 0",
+    ),
+    (
+        "reconciliation_evidence",
+        1,
+        "SELECT run_id,action_id,action_version,action_hash,effect_identity,source_ref,result FROM reconciliation_evidence LIMIT 0",
+    ),
+    (
+        "audit_heads",
+        1,
+        "SELECT workspace_id,next_sequence,last_hash FROM audit_heads LIMIT 0",
+    ),
+    (
+        "audit_records",
+        1,
+        "SELECT workspace_id,sequence,audit_id,recorded_at,actor_ref,event_type,subject_type,subject_ref,operation_ref,decision_ref,metadata_hash,prev_hash,record_hash FROM audit_records LIMIT 0",
+    ),
+    (
+        "briefing_results",
+        2,
+        "SELECT result_id,workspace_id,packet_id,packet_hash,requested_provider,requested_model,actual_provider,actual_model,assurance,result_json,result_hash,created_at,execution_authority FROM briefing_results LIMIT 0",
+    ),
+    (
+        "briefing_citations",
+        2,
+        "SELECT result_id,citation_id FROM briefing_citations LIMIT 0",
+    ),
+    (
+        "artifact_contents",
+        3,
+        "SELECT workspace_id,content_sha256,content,byte_length FROM artifact_contents LIMIT 0",
+    ),
+    (
+        "artifacts",
+        3,
+        "SELECT artifact_id,workspace_id,kind,name,media_type,content_sha256,byte_length,source_locator,source_locator_hash,import_request_id,trust,classification,created_at FROM artifacts LIMIT 0",
     ),
 ];
 
@@ -91,7 +177,19 @@ impl SqliteStore {
         mode: OpenMode,
     ) -> StoreResult<Self> {
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() {
+        // This API selects a file, not SQLite file: URI query options. Keep
+        // filesystem preflight and the eventual SQLite target identical.
+        if path
+            .as_os_str()
+            .as_encoded_bytes()
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"file:"))
+        {
+            return Err(StoreError::PersistenceError);
+        }
+        if mode == OpenMode::ReadWrite
+            && let Some(parent) = path.parent()
+        {
             std::fs::create_dir_all(parent).map_err(|_| StoreError::PersistenceError)?;
         }
         let authority = if mode == OpenMode::ReadWrite {
@@ -106,6 +204,36 @@ impl SqliteStore {
             file.try_lock_exclusive()
                 .map_err(|_| StoreError::AuthorityUnavailable)?;
             Some(file)
+        } else {
+            None
+        };
+        // Existing data is admitted read-only before any RW open, WAL change or
+        // migration. Authority-lock / SQLite SHM coordination is not data repair.
+        let admitted_version = if mode == OpenMode::ReadWrite
+            && path
+                .try_exists()
+                .map_err(|_| StoreError::PersistenceError)?
+        {
+            let probe = Self {
+                path: path.clone(),
+                workspace_id: workspace_id.clone(),
+                connection: Mutex::new(
+                    Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+                        .map_err(map_sqlite)?,
+                ),
+                authority: Mutex::new(None),
+                writable: false,
+            };
+            probe.configure()?;
+            let version = {
+                let connection = probe.lock_connection()?;
+                schema_version(&connection)?
+            };
+            if version > 0 {
+                probe.integrity_check()?;
+                probe.verify_audit_chain(&probe.workspace_id)?;
+            }
+            Some(version)
         } else {
             None
         };
@@ -130,7 +258,7 @@ impl SqliteStore {
         };
         store.configure()?;
         if mode == OpenMode::ReadWrite {
-            store.ensure_schema(&now)?;
+            store.ensure_schema(&now, admitted_version.unwrap_or(0))?;
             store.ensure_workspace(&now)?;
             store.enable_wal()?;
         } else {
@@ -156,34 +284,33 @@ impl SqliteStore {
             .map_err(map_sqlite)
     }
 
-    fn ensure_schema(&self, now: &Timestamp) -> StoreResult<()> {
+    fn ensure_schema(&self, now: &Timestamp, admitted_version: usize) -> StoreResult<()> {
         let mut conn = self.lock_connection()?;
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite)?;
-        for (index, (id, sql)) in MIGRATIONS.iter().enumerate() {
-            if index == 0 {
-                tx.execute_batch(sql).map_err(map_sqlite)?;
-            }
+        let version = schema_version(&tx)?;
+        if version != admitted_version {
+            return Err(StoreError::MigrationError);
+        }
+        if version == MIGRATIONS.len() {
+            // In particular, never rewrite current schema/ledger metadata.
+            return Ok(());
+        }
+        if version > 0 {
+            // This IMMEDIATE transaction reserves the source against other
+            // writers. A separate RO connection avoids backing up our own write
+            // transaction, which SQLite would report as SQLITE_LOCKED.
+            pre_migration_backup(&self.path, version)?;
+        }
+        for (id, sql) in MIGRATIONS.iter().skip(version) {
+            tx.execute_batch(sql).map_err(map_sqlite)?;
             let checksum = sha256_hex(sql.as_bytes());
-            let applied: Option<String> = tx
-                .query_row(
-                    "SELECT checksum FROM migration_ledger WHERE migration_id=?1",
-                    params![id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(map_sqlite)?;
-            match applied {
-                Some(value) if value == checksum => {}
-                Some(_) => return Err(StoreError::MigrationError),
-                None => {
-                    if index > 0 {
-                        tx.execute_batch(sql).map_err(map_sqlite)?;
-                    }
-                    tx.execute("INSERT INTO migration_ledger(migration_id,checksum,applied_at) VALUES(?1,?2,?3)",params![id,checksum,now.as_str()]).map_err(map_sqlite)?;
-                }
-            }
+            tx.execute(
+                "INSERT INTO migration_ledger(migration_id,checksum,applied_at) VALUES(?1,?2,?3)",
+                params![id, checksum, now.as_str()],
+            )
+            .map_err(map_sqlite)?;
         }
         tx.execute("DELETE FROM schema_meta", [])
             .map_err(map_sqlite)?;
@@ -196,38 +323,8 @@ impl SqliteStore {
     }
 
     fn check_existing_schema(&self) -> StoreResult<()> {
-        let conn = self.lock_connection()?;
-        let ledger_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='migration_ledger')",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(map_sqlite)?
-            != 0;
-        if !ledger_exists {
-            return Err(StoreError::MigrationError);
-        }
-        for (id, sql) in MIGRATIONS {
-            let value: Option<String> = conn
-                .query_row(
-                    "SELECT checksum FROM migration_ledger WHERE migration_id=?1",
-                    params![id],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(map_sqlite)?;
-            if value.as_deref() != Some(&sha256_hex(sql.as_bytes())) {
-                return Err(StoreError::MigrationError);
-            }
-        }
-        let version: Option<i64> = conn
-            .query_row("SELECT schema_version FROM schema_meta LIMIT 1", [], |r| {
-                r.get(0)
-            })
-            .optional()
-            .map_err(map_sqlite)?;
-        if version == Some(MIGRATIONS.len() as i64) {
+        let connection = self.lock_connection()?;
+        if schema_version(&connection)? == MIGRATIONS.len() {
             Ok(())
         } else {
             Err(StoreError::MigrationError)
@@ -382,6 +479,184 @@ impl SqliteStore {
         .map_err(map_sqlite)?;
         Ok(record)
     }
+}
+
+// Return zero only for an actually empty SQLite database. Recognized stores
+// must have one integer marker and the exact immutable, contiguous ledger prefix.
+fn schema_version(conn: &Connection) -> StoreResult<usize> {
+    let table_exists = |name: &str| -> StoreResult<bool> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value != 0)
+        .map_err(map_schema_error)
+    };
+    let ledger = table_exists("migration_ledger")?;
+    let marker = table_exists("schema_meta")?;
+    if !ledger && !marker {
+        let objects: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(map_schema_error)?;
+        return if objects == 0 {
+            Ok(0)
+        } else {
+            Err(StoreError::MigrationError)
+        };
+    }
+    if !ledger || !marker {
+        return Err(StoreError::MigrationError);
+    }
+    let versions = {
+        let mut statement = conn
+            .prepare("SELECT schema_version FROM schema_meta LIMIT 2")
+            .map_err(map_schema_error)?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, i64>(0))
+            .map_err(map_schema_error)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_schema_error)?
+    };
+    if versions.len() != 1 || !(1..=MIGRATIONS.len() as i64).contains(&versions[0]) {
+        return Err(StoreError::MigrationError);
+    }
+    let version = versions[0] as usize;
+    let entries = {
+        let mut statement = conn
+            .prepare("SELECT migration_id,checksum,applied_at FROM migration_ledger ORDER BY migration_id LIMIT 5")
+            .map_err(map_schema_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(map_schema_error)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_schema_error)?
+    };
+    if entries.len() != version
+        || entries
+            .iter()
+            .zip(MIGRATIONS)
+            .any(|((id, checksum, applied_at), (expected, sql))| {
+                id.as_str() != *expected
+                    || checksum != &sha256_hex(sql.as_bytes())
+                    || applied_at.parse::<Timestamp>().is_err()
+            })
+    {
+        return Err(StoreError::MigrationError);
+    }
+    for &(table, introduced, query) in REQUIRED_TABLES {
+        let exists = table_exists(table)?;
+        if exists != (version >= introduced) {
+            return Err(StoreError::MigrationError);
+        }
+        if exists {
+            let _validated_columns = conn.prepare(query).map_err(map_schema_error)?;
+        }
+    }
+    if version >= 2 {
+        let mut statement = conn
+            .prepare("PRAGMA table_info(briefing_results)")
+            .map_err(map_schema_error)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(map_schema_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_schema_error)?;
+        if columns.iter().any(|column| column == "packet_json") != (version >= 4) {
+            return Err(StoreError::MigrationError);
+        }
+    }
+    Ok(version)
+}
+
+fn map_schema_error(error: rusqlite::Error) -> StoreError {
+    match error {
+        rusqlite::Error::SqliteFailure(ref e, _)
+            if matches!(
+                e.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            ) =>
+        {
+            StoreError::StorageBusy
+        }
+        rusqlite::Error::SqliteFailure(ref e, _)
+            if matches!(
+                e.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            ) =>
+        {
+            StoreError::Corruption
+        }
+        _ => StoreError::MigrationError,
+    }
+}
+
+fn migration_backup_path(path: &Path, from: usize) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(
+        ".pre-migration-v{from}-to-v{}.bak",
+        MIGRATIONS.len()
+    ));
+    PathBuf::from(name)
+}
+
+// Called before the first migration DDL while the source IMMEDIATE transaction
+// is still open. Never overwrite/reuse a previous or partial backup; failure
+// leaves it for explicit inspection and prevents source migration.
+fn pre_migration_backup(path: &Path, from: usize) -> StoreResult<()> {
+    let source =
+        Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(map_sqlite)?;
+    source
+        .busy_timeout(std::time::Duration::from_millis(500))
+        .map_err(map_sqlite)?;
+    if schema_version(&source)? != from {
+        return Err(StoreError::MigrationError);
+    }
+    let destination = migration_backup_path(path, from);
+    let file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&destination)
+        .map_err(|_| StoreError::PersistenceError)?;
+    let mut target = Connection::open_with_flags(&destination, OpenFlags::SQLITE_OPEN_READ_WRITE)
+        .map_err(map_sqlite)?;
+    {
+        let backup = Backup::new(&source, &mut target).map_err(map_sqlite)?;
+        let started = std::time::Instant::now();
+        loop {
+            if started.elapsed() >= std::time::Duration::from_secs(30) {
+                return Err(StoreError::StorageBusy);
+            }
+            match backup.step(64).map_err(map_sqlite)? {
+                StepResult::Done => break,
+                StepResult::More => {}
+                StepResult::Busy | StepResult::Locked => return Err(StoreError::StorageBusy),
+                _ => return Err(StoreError::PersistenceError),
+            }
+        }
+    }
+    if schema_version(&target)? != from {
+        return Err(StoreError::MigrationError);
+    }
+    let integrity: String = target
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(map_sqlite)?;
+    if integrity != "ok" {
+        return Err(StoreError::Corruption);
+    }
+    target.close().map_err(|(_, error)| map_sqlite(error))?;
+    file.sync_all().map_err(|_| StoreError::PersistenceError)
 }
 
 fn authority_path(path: &Path) -> PathBuf {

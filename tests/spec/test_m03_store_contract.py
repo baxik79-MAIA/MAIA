@@ -17,9 +17,12 @@ class M03StoreContractTests(unittest.TestCase):
         self.assertNotIn("std::fs", source)
 
     def test_sqlite_adapter_owns_allowed_dependencies(self):
-        manifest = (ROOT / "infra/sqlite/Cargo.toml").read_text(encoding="utf-8")
-        self.assertIn('rusqlite = { version = "0.32", features = ["bundled", "backup"] }', manifest)
-        self.assertIn('fs2 = "0.4"', manifest)
+        manifest = tomllib.loads((ROOT / "infra/sqlite/Cargo.toml").read_text(encoding="utf-8"))
+        dependencies = manifest["dependencies"]
+        rusqlite = dependencies["rusqlite"]
+        self.assertEqual(rusqlite["version"], "0.41.1")
+        self.assertEqual(set(rusqlite["features"]), {"bundled", "backup"})
+        self.assertEqual(dependencies["fs2"], "0.4")
 
     def test_schema_keeps_cas_and_audit_fields_as_columns(self):
         schema = (ROOT / "infra/sqlite/migrations/0001_initial.sql").read_text(encoding="utf-8")

@@ -61,6 +61,12 @@ jobs:
       - name: Core Clippy including test-support code
         if: ${{ !cancelled() }}
         run: cargo clippy $CORE_PACKAGES --all-targets --all-features --locked --offline -- -D warnings
+      - name: Linux SQLite and health persistence tests
+        if: ${{ !cancelled() }}
+        run: cargo test -p maia-sqlite -p maia-local-intelligence-health --locked --no-fail-fast
+      - name: Linux persistence Clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy -p maia-sqlite -p maia-local-intelligence-health --all-targets --locked --offline -- -D warnings
       - name: Canonical spec and connector-boundary contract oracles
         if: ${{ !cancelled() }}
         run: python -m unittest discover -s tests/spec -p 'test*.py'
